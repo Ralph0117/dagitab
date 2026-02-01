@@ -1,4 +1,4 @@
-// src/PortfolioApp.jsx  (PART 1 / 2)
+// src/PortfolioApp.jsx  (UPDATED — PART 1 / 2)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 
@@ -29,6 +29,7 @@ export default function PortfolioApp({ user }) {
   // routing
   const [screen, setScreen] = useState(user ? "home" : "auth"); // auth | setpw | home | profile | subjects | folders | files
   const [toast, setToast] = useState("");
+  const [busy, setBusy] = useState(false); // ✅ for smooth prompts
 
   // auth ui
   const [email, setEmail] = useState("");
@@ -38,6 +39,9 @@ export default function PortfolioApp({ user }) {
   const [authMode, setAuthMode] = useState("login"); // login | signup | forgot
   const [resetEmail, setResetEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
+
+  // ✅ track first-time profile flow (new account guidance)
+  const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
 
   // profile
   const [profile, setProfile] = useState({
@@ -81,7 +85,7 @@ export default function PortfolioApp({ user }) {
   function notify(msg) {
     setToast(msg);
     window.clearTimeout(notify._t);
-    notify._t = window.setTimeout(() => setToast(""), 1800);
+    notify._t = window.setTimeout(() => setToast(""), 1500); // ✅ faster
   }
 
   // keep screen in sync with user
@@ -101,20 +105,33 @@ export default function PortfolioApp({ user }) {
 
   // ========= AUTH =========
   async function signIn() {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password: pass,
-    });
+    if (busy) return;
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    setBusy(false);
     if (error) return notify(error.message);
   }
 
+  // ✅ After sign up, immediately guide to profile (no sign-in again)
   async function signUp() {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password: pass,
-    });
+    if (busy) return;
+    setBusy(true);
+
+    const { data, error } = await supabase.auth.signUp({ email, password: pass });
+
+    setBusy(false);
     if (error) return notify(error.message);
-    notify("Account created. If email verification is ON, check your email.");
+
+    // If email verification is OFF, user is already signed in (session exists)
+    // If ON, they must verify first. We'll show message either way.
+    if (data?.session?.user?.id) {
+      notify("Account created. Please setup your profile.");
+      setNeedsProfileSetup(true);
+      // screen will switch to home via App.jsx auth listener; we force profile after profile loads
+    } else {
+      notify("Account created. Check your email to verify, then login.");
+      setAuthMode("login");
+    }
   }
 
   async function signOut() {
@@ -125,21 +142,25 @@ export default function PortfolioApp({ user }) {
   async function sendResetLink() {
     const em = resetEmail.trim();
     if (!em) return notify("Enter your email");
+    if (busy) return;
 
+    setBusy(true);
     const { error } = await supabase.auth.resetPasswordForEmail(em, {
-      redirectTo: window.location.origin, // works for localhost + netlify
+      redirectTo: window.location.origin, // ✅ required for Netlify
     });
+    setBusy(false);
 
     if (error) return notify(error.message);
-    notify("Password reset link sent. Check your email.");
+    notify("Reset link sent. Check your email.");
     setAuthMode("login");
   }
 
-  // If user clicks reset link, Supabase triggers PASSWORD_RECOVERY
+  // ✅ Smooth + fast reset prompt: always switch to setpw when recovery link is opened
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
         setScreen("setpw");
+        notify("Set your new password.");
       }
     });
     return () => sub?.subscription?.unsubscribe?.();
@@ -147,26 +168,29 @@ export default function PortfolioApp({ user }) {
 
   async function updatePassword() {
     if (!newPassword || newPassword.length < 6) return notify("Password must be at least 6 characters");
+    if (busy) return;
+
+    setBusy(true);
     const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setBusy(false);
+
     if (error) return notify(error.message);
 
-    notify("Password updated. Login again.");
+    // ✅ smooth: after updating, go straight to login page
+    notify("Password updated. Login now.");
     setNewPassword("");
     await supabase.auth.signOut();
     setScreen("auth");
+    setAuthMode("login");
   }
 
   // ========= PROFILE =========
   async function refreshSignedImage(path, setter) {
-    if (!path) {
-      setter(null);
-      return;
-    }
+    if (!path) return setter(null);
     const { data, error } = await supabase.storage.from("portfolio").createSignedUrl(path, 60 * 30);
     if (error) {
       console.error(error);
-      setter(null);
-      return;
+      return setter(null);
     }
     setter(data?.signedUrl ?? null);
   }
@@ -176,6 +200,7 @@ export default function PortfolioApp({ user }) {
     return !p.name || p.name.trim() === "" || p.name === "STUDENT 1";
   }
 
+  // ✅ do NOT auto-seed subjects for new accounts; keep empty unless user adds
   async function ensureProfile(u) {
     if (!u?.id) return;
 
@@ -190,7 +215,6 @@ export default function PortfolioApp({ user }) {
       return;
     }
 
-    // ✅ only insert if missing (do NOT overwrite)
     if (!data) {
       const { error: insErr } = await supabase.from("profiles").insert({
         id: u.id,
@@ -201,8 +225,10 @@ export default function PortfolioApp({ user }) {
         avatar_path: null,
         logo_path: null,
       });
-
       if (insErr) console.error("ensureProfile insert error:", insErr);
+
+      // ✅ mark as new user -> force profile flow
+      setNeedsProfileSetup(true);
     }
   }
 
@@ -225,17 +251,19 @@ export default function PortfolioApp({ user }) {
       await refreshSignedImage(data.avatar_path, setAvatarSrc);
       await refreshSignedImage(data.logo_path, setLogoSrc);
 
-      // ✅ First login -> force profile completion
-      if (isFirstTimeProfile(data)) {
+      // ✅ forced guided setup (first login OR new account just created)
+      if (needsProfileSetup || isFirstTimeProfile(data)) {
         setScreen("profile");
-        notify("Please complete your profile first.");
       }
     }
   }
 
+  // ✅ Save profile: if guided setup, unlock app immediately (no sign-in again)
   async function saveProfile(next) {
     if (!user?.id) return;
+    if (busy) return;
 
+    setBusy(true);
     // optimistic UI
     setProfile(next);
 
@@ -251,6 +279,8 @@ export default function PortfolioApp({ user }) {
       .select("id,name,section,school,avatar_path,logo_path,updated_at")
       .maybeSingle();
 
+    setBusy(false);
+
     if (error) {
       console.error("saveProfile error:", error);
       return notify("Failed to save profile");
@@ -263,11 +293,19 @@ export default function PortfolioApp({ user }) {
     }
 
     notify("Profile saved");
+
+    // ✅ if this was the first-time guided setup, go to home immediately
+    if (needsProfileSetup) {
+      setNeedsProfileSetup(false);
+      setScreen("home");
+    }
   }
 
   async function uploadAvatar(file) {
     if (!user?.id || !file) return;
+    if (busy) return;
 
+    setBusy(true);
     const path = `${user.id}/profile/avatar.jpg`;
 
     const { error: upErr } = await supabase.storage.from("portfolio").upload(path, file, {
@@ -277,6 +315,7 @@ export default function PortfolioApp({ user }) {
     });
 
     if (upErr) {
+      setBusy(false);
       console.error(upErr);
       return notify("Avatar upload failed");
     }
@@ -285,6 +324,8 @@ export default function PortfolioApp({ user }) {
       .from("profiles")
       .update({ avatar_path: path, updated_at: new Date().toISOString() })
       .eq("id", user.id);
+
+    setBusy(false);
 
     if (error) {
       console.error(error);
@@ -297,7 +338,9 @@ export default function PortfolioApp({ user }) {
 
   async function uploadLogo(file) {
     if (!user?.id || !file) return;
+    if (busy) return;
 
+    setBusy(true);
     const path = `${user.id}/branding/logo.png`;
 
     const { error: upErr } = await supabase.storage.from("portfolio").upload(path, file, {
@@ -307,6 +350,7 @@ export default function PortfolioApp({ user }) {
     });
 
     if (upErr) {
+      setBusy(false);
       console.error(upErr);
       return notify("Logo upload failed");
     }
@@ -315,6 +359,8 @@ export default function PortfolioApp({ user }) {
       .from("profiles")
       .update({ logo_path: path, updated_at: new Date().toISOString() })
       .eq("id", user.id);
+
+    setBusy(false);
 
     if (error) {
       console.error(error);
@@ -325,30 +371,18 @@ export default function PortfolioApp({ user }) {
     notify("Logo updated");
   }
 
-  // ✅ init when user id becomes available (prevents id=undefined)
+  // ✅ init when user id becomes available
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
       await ensureProfile(user);
       await loadProfile(user.id);
-      await loadSubjects();
+      await loadSubjects(); // ✅ loads empty by default for new accounts
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // ========= SUBJECTS =========
-  async function seedDefaultSubjects(uid_) {
-    const defaults = Array.from({ length: 8 }, (_, i) => ({
-      user_id: uid_,
-      title: `Subject ${i + 1}`,
-      icon: "📄",
-      sort: i + 1,
-    }));
-
-    const { error } = await supabase.from("subjects").insert(defaults);
-    if (error) console.error(error);
-  }
-
   async function loadSubjects() {
     if (!user?.id) return;
 
@@ -366,17 +400,12 @@ export default function PortfolioApp({ user }) {
       return notify("Failed to load subjects");
     }
 
-    if (!data || data.length === 0) {
-      await seedDefaultSubjects(user.id);
-      return loadSubjects();
-    }
-
-    setSubjects(data);
+    // ✅ no seeding anymore — new account starts EMPTY
+    setSubjects(data ?? []);
   }
 
   async function addSubject() {
     if (!user?.id) return;
-
     const title = newSubTitle.trim();
     if (!title) return notify("Enter subject name");
 
@@ -403,14 +432,11 @@ export default function PortfolioApp({ user }) {
 
   async function deleteSubject(subjectId) {
     if (!user?.id) return;
-
-    if (subjects.length <= 1) return notify("You must keep at least 1 subject");
     if (!confirm("Delete this subject?")) return;
 
-    // delete file rows for this subject (storage objects not removed here)
     await supabase.from("files").delete().eq("user_id", user.id).eq("subject_id", subjectId);
-
     const { error } = await supabase.from("subjects").delete().eq("user_id", user.id).eq("id", subjectId);
+
     if (error) {
       console.error(error);
       return notify("Failed to delete subject");
@@ -425,8 +451,55 @@ export default function PortfolioApp({ user }) {
     notify("Deleted");
   }
 
-  // ====== (PART 2 continues below) ======
-// src/PortfolioApp.jsx  (PART 2 / 2)
+  // ✅ Delete ALL subjects button (and their file records + storage files)
+  async function deleteAllSubjects() {
+    if (!user?.id) return;
+    if (!confirm("Delete ALL subjects and ALL files? This cannot be undone.")) return;
+
+    setBusy(true);
+
+    // 1) fetch all file object paths so we can remove from storage
+    const { data: fileRows, error: fErr } = await supabase
+      .from("files")
+      .select("object_path")
+      .eq("user_id", user.id);
+
+    if (fErr) {
+      setBusy(false);
+      console.error(fErr);
+      return notify("Failed to read files for deletion");
+    }
+
+    const paths = (fileRows ?? []).map((r) => r.object_path).filter(Boolean);
+
+    // 2) remove from storage in chunks (avoid too large request)
+    const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+    for (const group of chunk(paths, 100)) {
+      if (group.length) {
+        const { error: rmErr } = await supabase.storage.from("portfolio").remove(group);
+        if (rmErr) console.error("storage remove chunk error:", rmErr);
+      }
+    }
+
+    // 3) delete db rows
+    const { error: delFilesErr } = await supabase.from("files").delete().eq("user_id", user.id);
+    if (delFilesErr) console.error(delFilesErr);
+
+    const { error: delSubsErr } = await supabase.from("subjects").delete().eq("user_id", user.id);
+    if (delSubsErr) console.error(delSubsErr);
+
+    setBusy(false);
+
+    setSelectedSubject(null);
+    setCategory(null);
+    setFiles([]);
+    await loadSubjects();
+    notify("All subjects deleted");
+  }
+
+  // ===== (PART 2 continues: files + UI + smoother setpw prompt) =====
+// src/PortfolioApp.jsx  (UPDATED — PART 2 / 2)
+
   // ========= FILES =========
   async function loadFiles(subjectId, cat) {
     if (!user?.id) return;
@@ -467,17 +540,13 @@ export default function PortfolioApp({ user }) {
   }
 
   async function uploadSelectedFile(file) {
-    const f = file;
-    if (!f || !user?.id || !selectedSubject || !category) return;
+    if (!file || !user?.id || !selectedSubject || !category) return;
 
-    // ✅ safe filename for storage (fix signed url + mobile issues)
-    const safeName = f.name.replace(/[^\w.\-]+/g, "_");
-
-    // ✅ mobile-safe uid (fix crypto error)
+    const safeName = file.name.replace(/[^\w.\-]+/g, "_");
     const objectPath = `${user.id}/subjects/${selectedSubject.id}/${category}/${uid()}-${safeName}`;
 
-    const { error: upErr } = await supabase.storage.from("portfolio").upload(objectPath, f, {
-      contentType: f.type,
+    const { error: upErr } = await supabase.storage.from("portfolio").upload(objectPath, file, {
+      contentType: file.type,
       cacheControl: "3600",
     });
 
@@ -490,10 +559,10 @@ export default function PortfolioApp({ user }) {
       user_id: user.id,
       subject_id: selectedSubject.id,
       category,
-      title: f.name,
+      title: file.name,
       object_path: objectPath,
-      mime_type: f.type,
-      size: f.size,
+      mime_type: file.type,
+      size: file.size,
     });
 
     if (insErr) {
@@ -522,26 +591,25 @@ export default function PortfolioApp({ user }) {
   }
 
   async function openPreview(fileRow) {
-    const { data, error } = await supabase.storage.from("portfolio").createSignedUrl(fileRow.object_path, 60 * 10);
+    const { data, error } = await supabase.storage
+      .from("portfolio")
+      .createSignedUrl(fileRow.object_path, 60 * 10);
+
     if (error) {
       console.error(error);
       return notify("Preview failed");
     }
-    setPreview({
-      url: data.signedUrl,
-      title: fileRow.title,
-      mime: fileRow.mime_type || "",
-    });
+
+    setPreview({ url: data.signedUrl, title: fileRow.title, mime: fileRow.mime_type || "" });
   }
 
   async function renameFile() {
-    if (!user?.id || !optionsFor) return;
-    const newName = renameTitle.trim();
-    if (!newName) return notify("Enter new name");
+    if (!optionsFor || !user?.id) return;
+    if (!renameTitle.trim()) return notify("Enter a new name");
 
     const { error } = await supabase
       .from("files")
-      .update({ title: newName })
+      .update({ title: renameTitle.trim() })
       .eq("user_id", user.id)
       .eq("id", optionsFor.id);
 
@@ -557,20 +625,11 @@ export default function PortfolioApp({ user }) {
   }
 
   async function deleteFile() {
-    if (!user?.id || !optionsFor) return;
+    if (!optionsFor || !user?.id) return;
     if (!confirm("Delete this file?")) return;
 
-    const { error: stErr } = await supabase.storage.from("portfolio").remove([optionsFor.object_path]);
-    if (stErr) {
-      console.error(stErr);
-      return notify("Storage delete failed");
-    }
-
-    const { error } = await supabase.from("files").delete().eq("user_id", user.id).eq("id", optionsFor.id);
-    if (error) {
-      console.error(error);
-      return notify("DB delete failed");
-    }
+    await supabase.storage.from("portfolio").remove([optionsFor.object_path]);
+    await supabase.from("files").delete().eq("user_id", user.id).eq("id", optionsFor.id);
 
     setOptionsFor(null);
     notify("Deleted");
@@ -583,173 +642,28 @@ export default function PortfolioApp({ user }) {
     else if (screen === "subjects") setScreen("home");
     else if (screen === "folders") setScreen("subjects");
     else if (screen === "files") setScreen("folders");
-    else setScreen("home");
   }
 
   function go(tab) {
-    // basic guard: first time must complete profile
-    if (user?.id && isFirstTimeProfile(profile) && tab !== "profile") {
+    if (needsProfileSetup && tab !== "profile") {
       notify("Complete your profile first.");
       return setScreen("profile");
     }
-
-    if (tab === "home") setScreen("home");
-    if (tab === "subjects") setScreen("subjects");
-    if (tab === "profile") setScreen("profile");
+    setScreen(tab);
   }
 
-  // ========= AUTH UI =========
-  if (screen === "auth") {
-    return (
-      <div className="app-shell">
-        <div className="topbar">
-          <div className="brand">DAGITAB</div>
-          <div />
-        </div>
-
-        <div className="white-surface">
-          <div className="auth-card">
-            {/* Logo frame (uploads only after login). Shows last saved logo if exists + user is already signed-in. */}
-            <div
-              style={{
-                width: 120,
-                height: 120,
-                borderRadius: 14,
-                border: "3px solid rgba(30,73,214,0.95)",
-                margin: "4px auto 14px",
-                background: "rgba(30,73,214,0.06)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                overflow: "hidden",
-                userSelect: "none",
-              }}
-              title="Logo"
-            >
-              {logoSrc ? (
-                <img src={logoSrc} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              ) : (
-                <div style={{ fontWeight: 900, color: "#1e49d6" }}>LOGO</div>
-              )}
-            </div>
-
-            <div className="auth-banner">
-              Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
-            </div>
-
-            {/* Tabs */}
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button
-                className={`small-btn ${authMode === "login" ? "primary" : ""}`}
-                onClick={() => setAuthMode("login")}
-                type="button"
-              >
-                Login
-              </button>
-              <button
-                className={`small-btn ${authMode === "signup" ? "primary" : ""}`}
-                onClick={() => setAuthMode("signup")}
-                type="button"
-              >
-                Create
-              </button>
-              <button
-                className={`small-btn ${authMode === "forgot" ? "primary" : ""}`}
-                onClick={() => setAuthMode("forgot")}
-                type="button"
-              >
-                Forgot
-              </button>
-            </div>
-
-            {authMode !== "forgot" ? (
-              <>
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label>EMAIL</label>
-                  <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
-                </div>
-
-                <div className="field">
-                  <label>PASSWORD</label>
-                  <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" />
-                </div>
-
-                <div className="modal-actions">
-                  {authMode === "login" ? (
-                    <button className="small-btn primary" onClick={signIn}>
-                      Login
-                    </button>
-                  ) : (
-                    <button className="small-btn primary" onClick={signUp}>
-                      Create Account
-                    </button>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label>EMAIL</label>
-                  <input
-                    value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
-                    placeholder="Enter your account email"
-                  />
-                </div>
-                <div className="modal-actions">
-                  <button className="small-btn primary" onClick={sendResetLink}>
-                    Send Reset Link
-                  </button>
-                </div>
-                <div className="subtle" style={{ marginTop: 10 }}>
-                  We will email you a reset link. After you open it, you’ll return here and set a new password.
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {toast && <div className="toast">{toast}</div>}
-      </div>
-    );
-  }
-
-  // ========= PASSWORD RESET PAGE =========
+  // ========= PASSWORD RESET UI =========
   if (screen === "setpw") {
     return (
       <div className="app-shell">
-        <div className="topbar">
-          <div className="brand">RESET PASSWORD</div>
-          <div />
+        <div className="topbar"><div className="brand">Reset Password</div></div>
+        <div className="white-surface auth-card">
+          <div className="hero">Set a new password</div>
+          <input type="password" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} placeholder="New password" />
+          <button className="small-btn primary" disabled={busy} onClick={updatePassword}>
+            {busy ? "Saving..." : "Update Password"}
+          </button>
         </div>
-
-        <div className="white-surface">
-          <div className="auth-card">
-            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>Set a new password</div>
-            <div className="subtle">Enter your new password below.</div>
-
-            <div className="field" style={{ marginTop: 12 }}>
-              <label>NEW PASSWORD</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
-
-            <div className="modal-actions">
-              <button className="small-btn primary" onClick={updatePassword}>
-                Update Password
-              </button>
-              <button className="small-btn" onClick={() => setScreen("auth")}>
-                Back
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {toast && <div className="toast">{toast}</div>}
       </div>
     );
   }
@@ -758,427 +672,75 @@ export default function PortfolioApp({ user }) {
   return (
     <div className="app-shell">
       <div className="topbar">
-        <div className="topbar-left">
-          {screen !== "home" ? (
-            <button className="back-btn" onClick={back} title="Back">
-              ←
-            </button>
-          ) : null}
-          <div className="brand">{titleLine}</div>
-        </div>
-
-        <button className="icon-btn" onClick={() => setScreen("profile")} title="Profile">
-          👤
-        </button>
+        {screen !== "home" && <button onClick={back}>←</button>}
+        <div className="brand">{titleLine}</div>
       </div>
 
       {/* HOME */}
       {screen === "home" && (
         <div className="white-surface">
-          <div className="hero">Hi, {profile?.name || "STUDENT"}</div>
-          <div className="subtle">Your digital portfolio — organized and synced.</div>
-
-          <div className="big-tile" onClick={() => setScreen("subjects")} role="button">
-            <div className="big-icon">📘</div>
-            <div className="big-label">SUBJECTS</div>
-          </div>
-
-          <div className="modal-actions" style={{ marginTop: 14 }}>
-            <button className="small-btn" onClick={() => setScreen("profile")}>
-              👤 My Profile
-            </button>
-            <button className="small-btn" onClick={signOut}>
-              Logout
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* PROFILE */}
-      {screen === "profile" && (
-        <div className="white-surface">
-          <div className="profile-card">
-            <div
-              className="avatar"
-              onClick={() => document.getElementById("avatarInput").click()}
-              style={{ cursor: "pointer" }}
-              title="Change photo"
-            >
-              {avatarSrc ? <img src={avatarSrc} alt="avatar" /> : <div style={{ fontSize: 28 }}>👤</div>}
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 900, fontSize: 18 }}>My Profile</div>
-              <div className="subtle" style={{ margin: 0 }}>
-                Tap avatar to change photo
-              </div>
-            </div>
-          </div>
-
-          <input
-            id="avatarInput"
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) uploadAvatar(f);
-            }}
-          />
-
-          {/* optional: logo uploader here too (this one works because you are logged in) */}
-          <div className="profile-card" style={{ marginTop: 12 }}>
-            <div
-              onClick={() => document.getElementById("logoInput").click()}
-              style={{
-                width: 70,
-                height: 70,
-                borderRadius: 12,
-                border: "2px solid rgba(30,73,214,0.65)",
-                background: "rgba(30,73,214,0.06)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                overflow: "hidden",
-                cursor: "pointer",
-              }}
-              title="Change logo"
-            >
-              {logoSrc ? (
-                <img src={logoSrc} alt="logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              ) : (
-                <div style={{ fontWeight: 900, color: "#1e49d6" }}>LOGO</div>
-              )}
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>App Logo</div>
-              <div className="subtle" style={{ margin: 0 }}>
-                Tap to upload/change
-              </div>
-            </div>
-          </div>
-
-          <input
-            id="logoInput"
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) uploadLogo(f);
-            }}
-          />
-
-          <div className="field" style={{ marginTop: 12 }}>
-            <label>FULL NAME</label>
-            <input
-              value={profile.name || ""}
-              onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-              onBlur={() => saveProfile(profile)}
-            />
-          </div>
-
-          <div className="field">
-            <label>SECTION</label>
-            <input
-              value={profile.section || ""}
-              onChange={(e) => setProfile({ ...profile, section: e.target.value })}
-              onBlur={() => saveProfile(profile)}
-            />
-          </div>
-
-          <div className="field">
-            <label>SCHOOL</label>
-            <input
-              value={profile.school || ""}
-              onChange={(e) => setProfile({ ...profile, school: e.target.value })}
-              onBlur={() => saveProfile(profile)}
-            />
-          </div>
-
-          <div className="modal-actions">
-            <button className="small-btn primary" onClick={() => saveProfile(profile)}>
-              Save
-            </button>
-            <button className="small-btn" onClick={signOut}>
-              Logout
-            </button>
-          </div>
+          <div className="hero">Hi, {profile.name}</div>
+          <button onClick={() => setScreen("subjects")}>Subjects</button>
         </div>
       )}
 
       {/* SUBJECTS */}
       {screen === "subjects" && (
         <div className="white-surface">
-          <div className="subtle">Tap a subject. Add or delete subjects.</div>
-
-          <div className="modal-actions" style={{ marginTop: 8 }}>
-            <button className="small-btn primary" onClick={() => setShowAddSubject(true)}>
-              + Add Subject
-            </button>
-          </div>
-
-          {loadingSubjects ? (
-            <div className="subtle" style={{ marginTop: 10 }}>
-              Loading…
-            </div>
-          ) : (
-            <div className="grid" style={{ marginTop: 12 }}>
-              {subjects.map((s) => (
-                <div key={s.id} className="tile">
-                  <div
-                    onClick={() => openFolders(s)}
-                    role="button"
-                    style={{ cursor: "pointer" }}
-                    title="Open"
-                  >
-                    <div className="ticon">{s.icon}</div>
-                    <div className="ttext">{s.title}</div>
-                  </div>
-
-                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <button className="small-btn" onClick={() => openFolders(s)}>
-                      Open
-                    </button>
-                    {/* ✅ Delete button for any subject (still blocks deleting last one) */}
-                    <button className="small-btn danger" onClick={() => deleteSubject(s.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Add Subject Modal */}
-          {showAddSubject && (
-            <div className="modal">
-              <div className="modal-card">
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Add Subject</div>
-                <div className="subtle" style={{ marginTop: 4 }}>
-                  Name + choose an icon.
-                </div>
-
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label>SUBJECT NAME</label>
-                  <input value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} placeholder="e.g., Math" />
-                </div>
-
-                <div style={{ marginTop: 10, fontWeight: 900, fontSize: 12, color: "#0f172a" }}>ICON</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                  {ICONS.map((ic) => (
-                    <button
-                      key={ic}
-                      className={`icon-pick ${newSubIcon === ic ? "active" : ""}`}
-                      onClick={() => setNewSubIcon(ic)}
-                      type="button"
-                    >
-                      {ic}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="modal-actions" style={{ marginTop: 14 }}>
-                  <button className="small-btn primary" onClick={addSubject}>
-                    Add
-                  </button>
-                  <button className="small-btn" onClick={() => setShowAddSubject(false)}>
-                    Cancel
-                  </button>
-                </div>
+          <button onClick={deleteAllSubjects} className="danger">Delete All Subjects</button>
+          <div className="grid">
+            {subjects.map(s => (
+              <div key={s.id} onClick={()=>openFolders(s)}>
+                {s.icon} {s.title}
+                <button onClick={()=>deleteSubject(s.id)}>🗑</button>
               </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
 
       {/* FOLDERS */}
       {screen === "folders" && (
         <div className="white-surface">
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>
-            {selectedSubject ? `${selectedSubject.icon} ${selectedSubject.title}` : "Subject"}
-          </div>
-
-          <div className="row" onClick={() => openFiles("performance")}>
-            <div className="box">📁</div>
-            <div className="rtitle">Performance Tasks</div>
-          </div>
-
-          <div style={{ height: 12 }} />
-
-          <div className="row" onClick={() => openFiles("written")}>
-            <div className="box">📁</div>
-            <div className="rtitle">Written Works</div>
-          </div>
+          <button onClick={()=>openFiles("performance")}>Performance</button>
+          <button onClick={()=>openFiles("written")}>Written</button>
         </div>
       )}
 
       {/* FILES */}
       {screen === "files" && (
         <div className="white-surface">
-          <div style={{ fontWeight: 900 }}>
-            {selectedSubject ? selectedSubject.title : "Subject"} •{" "}
-            {category === "performance" ? "Performance Tasks" : "Written Works"}
-          </div>
-          <div className="subtle">Upload using the + button.</div>
-
-          <div className="file-list">
-            {loadingFiles ? (
-              <div className="subtle">Loading…</div>
-            ) : files.length === 0 ? (
-              <div className="subtle" style={{ textAlign: "center", padding: "40px 10px" }}>
-                <div style={{ fontSize: 44 }}>📄</div>
-                <div style={{ fontWeight: 900, color: "#0f172a" }}>No files yet</div>
-                <div>Click + to upload your work.</div>
-              </div>
-            ) : (
-              files.map((f) => (
-                <div key={f.id} className="file-item">
-                  <div className="file-thumb" onClick={() => openPreview(f)} style={{ cursor: "pointer" }}>
-                    {isImage(f.mime_type) ? "🖼️" : "📄"}
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="file-title" title={f.title}>
-                      {f.title}
-                    </div>
-                    <div className="subtle" style={{ margin: 0 }}>
-                      {fmtBytes(f.size)} • {new Date(f.created_at).toLocaleString()}
-                    </div>
-                  </div>
-
-                  <button
-                    className="icon-btn"
-                    onClick={() => {
-                      setOptionsFor(f);
-                      setRenameTitle(f.title || "");
-                    }}
-                    title="Options"
-                    type="button"
-                  >
-                    ⋮
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Floating + */}
-          <button className="fab" onClick={triggerUpload} title="Upload">
-            +
-          </button>
-
-          {/* Upload chooser */}
-          {showUploadChooser && (
-            <div className="modal" onClick={() => setShowUploadChooser(false)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Upload</div>
-                <div className="subtle" style={{ marginTop: 4 }}>
-                  Choose source:
-                </div>
-
-                <div className="modal-actions" style={{ marginTop: 14 }}>
-                  <button className="small-btn primary" onClick={() => fileRef.current?.click()} type="button">
-                    📁 File
-                  </button>
-                  <button className="small-btn" onClick={() => cameraRef.current?.click()} type="button">
-                    📷 Camera
-                  </button>
-                  <button className="small-btn" onClick={() => setShowUploadChooser(false)} type="button">
-                    Cancel
-                  </button>
-                </div>
-
-                <input
-                  ref={fileRef}
-                  type="file"
-                  style={{ display: "none" }}
-                  onChange={handleUploadAny}
-                />
-                <input
-                  ref={cameraRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: "none" }}
-                  onChange={handleUploadCamera}
-                />
-              </div>
+          <button onClick={triggerUpload}>+</button>
+          {files.map(f => (
+            <div key={f.id} onClick={()=>openPreview(f)}>
+              {f.title}
             </div>
-          )}
-
-          {/* Preview modal */}
-          {preview && (
-            <div className="modal" onClick={() => setPreview(null)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-                <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>{preview.title}</div>
-
-                {isImage(preview.mime) ? (
-                  <img src={preview.url} alt="preview" style={{ width: "100%", borderRadius: 12 }} />
-                ) : (
-                  <iframe title="preview" src={preview.url} style={{ width: "100%", height: 520, border: 0 }} />
-                )}
-
-                <div className="modal-actions" style={{ marginTop: 12 }}>
-                  <button className="small-btn" onClick={() => setPreview(null)} type="button">
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Options modal */}
-          {optionsFor && (
-            <div className="modal" onClick={() => setOptionsFor(null)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>File Options</div>
-
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label>RENAME</label>
-                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
-                </div>
-
-                <div className="modal-actions" style={{ marginTop: 12 }}>
-                  <button className="small-btn primary" onClick={renameFile} type="button">
-                    Save Name
-                  </button>
-                  <button className="small-btn danger" onClick={deleteFile} type="button">
-                    Delete
-                  </button>
-                  <button className="small-btn" onClick={() => setOptionsFor(null)} type="button">
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          ))}
         </div>
       )}
 
-      {/* ✅ Bottom Navigation (easy navigation) */}
+      {/* Upload Modal */}
+      {showUploadChooser && (
+        <div className="modal">
+          <button onClick={()=>fileRef.current.click()}>File</button>
+          <button onClick={()=>cameraRef.current.click()}>Camera</button>
+          <input type="file" ref={fileRef} hidden onChange={handleUploadAny}/>
+          <input type="file" ref={cameraRef} accept="image/*" capture hidden onChange={handleUploadCamera}/>
+        </div>
+      )}
+
+      {/* Preview */}
+      {preview && (
+        <div className="modal" onClick={()=>setPreview(null)}>
+          {isImage(preview.mime) ? <img src={preview.url}/> : <iframe src={preview.url}/>}
+        </div>
+      )}
+
+      {/* Bottom Nav */}
       <div className="bottom-nav">
-        <button className={`navbtn ${screen === "home" ? "active" : ""}`} onClick={() => go("home")} type="button">
-          <div className="navico">🏠</div>
-          <div className="navtxt">Home</div>
-        </button>
-
-        <button
-          className={`navbtn ${screen === "subjects" || screen === "folders" || screen === "files" ? "active" : ""}`}
-          onClick={() => go("subjects")}
-          type="button"
-        >
-          <div className="navico">📚</div>
-          <div className="navtxt">Subjects</div>
-        </button>
-
-        <button className={`navbtn ${screen === "profile" ? "active" : ""}`} onClick={() => go("profile")} type="button">
-          <div className="navico">👤</div>
-          <div className="navtxt">Profile</div>
-        </button>
+        <button onClick={()=>go("home")}>Home</button>
+        <button onClick={()=>go("subjects")}>Subjects</button>
+        <button onClick={()=>go("profile")}>Profile</button>
       </div>
 
       {toast && <div className="toast">{toast}</div>}

@@ -17,7 +17,6 @@ function fmtBytes(bytes = 0) {
   }
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
-
 function isImage(mime = "") {
   return mime.startsWith("image/");
 }
@@ -26,25 +25,23 @@ const ICONS = ["📘", "📄", "📁", "🧪", "💻", "📐", "🧠", "🎨", "
 
 export default function PortfolioApp({ user }) {
   // routing
-  const [screen, setScreen] = useState(user ? "home" : "auth"); // auth | home | setup | profile | subjects | folders | files
+  const [screen, setScreen] = useState(user ? "home" : "auth"); // auth | home | profile | subjects | folders | files
   const [toast, setToast] = useState("");
 
-  // AUTH UI state (tabs)
-  // login | signup | forgot | reset
-  const [authMode, setAuthMode] = useState("login");
-
-  // auth ui
+  // ===== AUTH UI =====
+  const [authMode, setAuthMode] = useState("login"); // login | signup | reset
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
-  const [pass2, setPass2] = useState(""); // confirm password (signup)
+  const [pass2, setPass2] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [showPass2, setShowPass2] = useState(false);
 
-  // reset password fields
+  // reset-password screen
   const [newPass, setNewPass] = useState("");
   const [newPass2, setNewPass2] = useState("");
   const [showNewPass, setShowNewPass] = useState(false);
   const [showNewPass2, setShowNewPass2] = useState(false);
+  const [isRecovery, setIsRecovery] = useState(false); // ✅ keeps UI in reset even if session exists
 
   // profile
   const [profile, setProfile] = useState({
@@ -79,8 +76,8 @@ export default function PortfolioApp({ user }) {
   const cameraRef = useRef(null);
 
   // modals
-  const [preview, setPreview] = useState(null); // {url,title,mime}
-  const [optionsFor, setOptionsFor] = useState(null); // file row
+  const [preview, setPreview] = useState(null);
+  const [optionsFor, setOptionsFor] = useState(null);
   const [renameTitle, setRenameTitle] = useState("");
 
   function notify(msg) {
@@ -89,49 +86,15 @@ export default function PortfolioApp({ user }) {
     notify._t = window.setTimeout(() => setToast(""), 1800);
   }
 
-  // keep screen in sync with user
-  useEffect(() => {
-    setScreen(user ? (prev) => (prev === "auth" ? "home" : prev) : "auth");
-  }, [user]);
-
+  // ===== Title per screen =====
   const titleLine = useMemo(() => {
     if (screen === "home") return "DAGITAB";
-    if (screen === "setup") return "SETUP";
     if (screen === "profile") return "PROFILE";
     if (screen === "subjects") return "SUBJECTS";
     if (screen === "folders") return "FOLDERS";
     if (screen === "files") return "FILES";
     return "DAGITAB";
   }, [screen]);
-
-  // =========================================================
-  // ✅ PASSWORD RESET FIX: detect recovery link and show reset UI
-  // =========================================================
-  useEffect(() => {
-    // 1) If link arrives with type=recovery (query) or access_token (hash), open reset mode.
-    const href = window.location.href;
-    const qs = new URLSearchParams(window.location.search);
-    const hash = window.location.hash || "";
-
-    const isRecoveryQuery = qs.get("type") === "recovery";
-    const hasAccessToken = hash.includes("access_token=");
-    const hasRecoveryInHash = hash.includes("type=recovery");
-
-    if ((isRecoveryQuery || hasAccessToken || hasRecoveryInHash) && screen === "auth") {
-      setAuthMode("reset");
-    }
-
-    // 2) Also listen to Supabase auth event PASSWORD_RECOVERY.
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setScreen("auth");
-        setAuthMode("reset");
-      }
-    });
-
-    return () => sub?.subscription?.unsubscribe?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ========= AUTH =========
   async function signIn() {
@@ -143,65 +106,114 @@ export default function PortfolioApp({ user }) {
   }
 
   async function signUp() {
-    if (pass.length < 6) return notify("Password must be at least 6 characters");
     if (pass !== pass2) return notify("Passwords do not match");
-
     const { error } = await supabase.auth.signUp({
       email,
       password: pass,
     });
-
     if (error) return notify(error.message);
-
-    // ✅ if email confirm is OFF, user is signed in immediately.
-    // If email confirm is ON, they must verify first.
-    notify("Account created. If email verification is ON, check your email.");
-  }
-
-  async function sendResetEmail() {
-    if (!email) return notify("Enter your email first");
-
-    // ✅ critical: redirect back to same tab/site
-    // Netlify will serve your app at window.location.origin
-    const redirectTo = window.location.origin;
-
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
-    });
-
-    if (error) return notify(error.message);
-
-    notify("Reset email sent. Open it and you'll be redirected here.");
-  }
-
-  async function updatePasswordNow() {
-    if (newPass.length < 6) return notify("Password must be at least 6 characters");
-    if (newPass !== newPass2) return notify("Passwords do not match");
-
-    // ✅ when user came from recovery link, supabase creates a recovery session
-    const { error } = await supabase.auth.updateUser({ password: newPass });
-    if (error) return notify(error.message);
-
-    // Clean up UI fields
-    setNewPass("");
-    setNewPass2("");
-
-    notify("Password updated. You can login now.");
+    notify("Account created. You can login now.");
     setAuthMode("login");
-
-    // Optional: remove hash tokens from URL so refresh won't reopen reset screen
-    if (window.location.hash) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
   }
 
   async function signOut() {
     await supabase.auth.signOut();
   }
 
-  // ========= PROFILE / SUBJECTS / FILES =========
-  // (rest continues in PART 2...)
-  // ========= PROFILE =========
+  /**
+   * ✅ Send reset email that opens a "separate page" URL:
+   *    https://your-site/reset-password
+   */
+  async function sendResetEmail() {
+    if (!email.trim()) return notify("Enter your email first");
+
+    const redirectTo = `${window.location.origin}/reset-password`;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo,
+    });
+
+    if (error) return notify(error.message);
+    notify("Reset link sent. Open your email.");
+  }
+
+  /**
+   * ✅ Called on /reset-password after user clicks email link
+   * This updates the password using the recovery session.
+   */
+  async function updatePasswordNow() {
+    if (!newPass || newPass.length < 6) return notify("Password must be at least 6 characters");
+    if (newPass !== newPass2) return notify("Passwords do not match");
+
+    // supabase-js v2: updateUser() updates password for current session
+    const { error } = await supabase.auth.updateUser({ password: newPass });
+
+    if (error) return notify(error.message);
+
+    notify("Password updated. Please login.");
+    // clean reset state + go to login
+    setIsRecovery(false);
+    setAuthMode("login");
+    setScreen("auth");
+
+    // optional: sign out so they login cleanly
+    await supabase.auth.signOut();
+
+    // cleanup URL so refresh doesn't stay in recovery
+    try {
+      window.history.replaceState({}, document.title, "/");
+    } catch {}
+  }
+
+  /**
+   * ✅ Detect recovery mode from URL (works even if onAuthStateChange doesn't fire)
+   * When user lands on /reset-password#type=recovery...
+   */
+  useEffect(() => {
+    const path = window.location.pathname || "";
+    const hash = window.location.hash || "";
+
+    const looksRecovery =
+      path.includes("/reset-password") ||
+      hash.includes("type=recovery") ||
+      hash.includes("access_token=") ||
+      hash.includes("refresh_token=");
+
+    if (looksRecovery) {
+      setIsRecovery(true);
+      setScreen("auth");
+      setAuthMode("reset");
+    }
+  }, []);
+
+  /**
+   * ✅ Also listen to auth events; some projects fire PASSWORD_RECOVERY
+   */
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsRecovery(true);
+        setScreen("auth");
+        setAuthMode("reset");
+      }
+    });
+
+    return () => sub?.subscription?.unsubscribe?.();
+  }, []);
+
+  /**
+   * Keep screen in sync with user:
+   * ✅ BUT if in recovery mode, DO NOT jump to home even if session exists
+   */
+  useEffect(() => {
+    if (isRecovery) {
+      setScreen("auth");
+      return;
+    }
+    setScreen(user ? (prev) => (prev === "auth" ? "home" : prev) : "auth");
+  }, [user, isRecovery]);
+
+  // ========= PROFILE (kept same as your working version) =========
   async function refreshAvatarSignedUrl(avatarPath) {
     if (!avatarPath) {
       setAvatarSrc(null);
@@ -268,7 +280,6 @@ export default function PortfolioApp({ user }) {
 
   async function saveProfile(next) {
     if (!user?.id) return;
-
     setProfile(next);
 
     const { data, error } = await supabase
@@ -326,17 +337,7 @@ export default function PortfolioApp({ user }) {
     notify("Avatar updated");
   }
 
-  // init profile + subjects only when user is ready
-  useEffect(() => {
-    if (!user?.id) return;
-    (async () => {
-      await ensureProfile(user);
-      await loadProfile(user.id);
-      await loadSubjects();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
+  // ✅ stop here for Part 1
   // ========= SUBJECTS =========
   async function loadSubjects() {
     if (!user?.id) return;
@@ -355,6 +356,7 @@ export default function PortfolioApp({ user }) {
       return notify("Failed to load subjects");
     }
 
+    // ✅ NEW accounts: no premade subjects
     setSubjects(data ?? []);
   }
 
@@ -364,7 +366,9 @@ export default function PortfolioApp({ user }) {
     const title = newSubTitle.trim();
     if (!title) return notify("Enter subject name");
 
-    const nextSort = subjects.length ? Math.max(...subjects.map((s) => s.sort || 0)) + 1 : 1;
+    const nextSort = subjects.length
+      ? Math.max(...subjects.map((s) => s.sort || 0)) + 1
+      : 1;
 
     const { error } = await supabase.from("subjects").insert({
       user_id: user.id,
@@ -390,7 +394,12 @@ export default function PortfolioApp({ user }) {
     if (!confirm("Delete this subject?")) return;
 
     await supabase.from("files").delete().eq("user_id", user.id).eq("subject_id", subjectId);
-    const { error } = await supabase.from("subjects").delete().eq("user_id", user.id).eq("id", subjectId);
+
+    const { error } = await supabase
+      .from("subjects")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("id", subjectId);
 
     if (error) {
       console.error(error);
@@ -408,13 +417,16 @@ export default function PortfolioApp({ user }) {
 
   async function deleteAllSubjects() {
     if (!user?.id) return;
-    if (!confirm("Delete ALL subjects and files?")) return;
+    if (!confirm("Delete ALL subjects? This also removes their files.")) return;
 
-    await supabase.from("files").delete().eq("user_id", user.id);
-    const { error } = await supabase.from("subjects").delete().eq("user_id", user.id);
+    // delete file rows
+    const { error: fErr } = await supabase.from("files").delete().eq("user_id", user.id);
+    if (fErr) console.error(fErr);
 
-    if (error) {
-      console.error(error);
+    // delete subjects
+    const { error: sErr } = await supabase.from("subjects").delete().eq("user_id", user.id);
+    if (sErr) {
+      console.error(sErr);
       return notify("Failed to delete all subjects");
     }
 
@@ -422,7 +434,6 @@ export default function PortfolioApp({ user }) {
     setCategory(null);
     setFiles([]);
     await loadSubjects();
-    setScreen("subjects");
     notify("All subjects deleted");
   }
 
@@ -513,11 +524,15 @@ export default function PortfolioApp({ user }) {
   }
 
   async function openPreview(fileRow) {
-    const { data, error } = await supabase.storage.from("portfolio").createSignedUrl(fileRow.object_path, 60 * 10);
+    const { data, error } = await supabase.storage
+      .from("portfolio")
+      .createSignedUrl(fileRow.object_path, 60 * 10);
+
     if (error) {
       console.error(error);
       return notify("Preview failed");
     }
+
     setPreview({
       url: data.signedUrl,
       title: fileRow.title,
@@ -527,6 +542,7 @@ export default function PortfolioApp({ user }) {
 
   async function renameFile() {
     if (!user?.id || !optionsFor) return;
+
     const newName = renameTitle.trim();
     if (!newName) return notify("Enter new name");
 
@@ -557,7 +573,12 @@ export default function PortfolioApp({ user }) {
       return notify("Storage delete failed");
     }
 
-    const { error } = await supabase.from("files").delete().eq("user_id", user.id).eq("id", optionsFor.id);
+    const { error } = await supabase
+      .from("files")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("id", optionsFor.id);
+
     if (error) {
       console.error(error);
       return notify("DB delete failed");
@@ -568,7 +589,18 @@ export default function PortfolioApp({ user }) {
     await loadFiles(selectedSubject.id, category);
   }
 
-  // Back navigation
+  // ========= INIT when user ready =========
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      await ensureProfile(user);
+      await loadProfile(user.id);
+      await loadSubjects();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // ========= NAV =========
   function back() {
     if (screen === "profile") setScreen("home");
     else if (screen === "subjects") setScreen("home");
@@ -577,8 +609,11 @@ export default function PortfolioApp({ user }) {
     else setScreen("home");
   }
 
-  // ========= AUTH PAGE =========
+  // ========= AUTH PAGE (Login/Signup/Reset tabs) =========
   if (screen === "auth") {
+    // ✅ If user clicked email recovery link, force reset form
+    const showingReset = authMode === "reset" || isRecovery;
+
     return (
       <div className="app-shell">
         <div className="topbar">
@@ -588,27 +623,33 @@ export default function PortfolioApp({ user }) {
 
         <div className="white-surface">
           <div className="auth-card">
-            {/* Tabs: Login / Sign Up (no extra forgot tab) */}
-            <div className="auth-tabs">
-              <button
-                className={`tab ${authMode === "login" ? "active" : ""}`}
-                onClick={() => setAuthMode("login")}
-              >
-                Login
-              </button>
-              <button
-                className={`tab ${authMode === "signup" ? "active" : ""}`}
-                onClick={() => setAuthMode("signup")}
-              >
-                Sign Up
-              </button>
+            {/* tabs */}
+            {!showingReset && (
+              <div className="auth-tabs">
+                <button
+                  className={"tab " + (authMode === "login" ? "active" : "")}
+                  onClick={() => setAuthMode("login")}
+                >
+                  Login
+                </button>
+                <button
+                  className={"tab " + (authMode === "signup" ? "active" : "")}
+                  onClick={() => setAuthMode("signup")}
+                >
+                  Sign Up
+                </button>
+              </div>
+            )}
+
+            <div className="auth-banner">
+              Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
             </div>
 
-            {/* Reset password prompt (auto opens from email link) */}
-            {authMode === "reset" ? (
+            {/* RESET SCREEN */}
+            {showingReset ? (
               <>
-                <div className="auth-banner">
-                  Set a new password for your account.
+                <div className="subtle" style={{ marginTop: 10 }}>
+                  Set your new password.
                 </div>
 
                 <div className="field" style={{ marginTop: 12 }}>
@@ -618,34 +659,24 @@ export default function PortfolioApp({ user }) {
                       type={showNewPass ? "text" : "password"}
                       value={newPass}
                       onChange={(e) => setNewPass(e.target.value)}
-                      placeholder="••••••••"
+                      placeholder="New password"
                     />
-                    <button
-                      className="eye"
-                      type="button"
-                      onClick={() => setShowNewPass((v) => !v)}
-                      title="Show/Hide"
-                    >
+                    <button className="eye" onClick={() => setShowNewPass((v) => !v)} type="button">
                       {showNewPass ? "🙈" : "👁️"}
                     </button>
                   </div>
                 </div>
 
                 <div className="field">
-                  <label>CONFIRM PASSWORD</label>
+                  <label>CONFIRM NEW PASSWORD</label>
                   <div className="pw-wrap">
                     <input
                       type={showNewPass2 ? "text" : "password"}
                       value={newPass2}
                       onChange={(e) => setNewPass2(e.target.value)}
-                      placeholder="••••••••"
+                      placeholder="Confirm password"
                     />
-                    <button
-                      className="eye"
-                      type="button"
-                      onClick={() => setShowNewPass2((v) => !v)}
-                      title="Show/Hide"
-                    >
+                    <button className="eye" onClick={() => setShowNewPass2((v) => !v)} type="button">
                       {showNewPass2 ? "🙈" : "👁️"}
                     </button>
                   </div>
@@ -653,91 +684,137 @@ export default function PortfolioApp({ user }) {
 
                 <div className="modal-actions">
                   <button className="small-btn primary" onClick={updatePasswordNow}>
-                    Update Password
+                    Save New Password
                   </button>
-                  <button className="small-btn" onClick={() => setAuthMode("login")}>
+                  <button
+                    className="small-btn"
+                    onClick={() => {
+                      setIsRecovery(false);
+                      setAuthMode("login");
+                      setNewPass("");
+                      setNewPass2("");
+                      try {
+                        window.history.replaceState({}, document.title, "/");
+                      } catch {}
+                    }}
+                  >
                     Back to Login
                   </button>
                 </div>
               </>
             ) : (
               <>
-                <div className="auth-banner">
-                  Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
-                </div>
+                {/* LOGIN */}
+                {authMode === "login" && (
+                  <>
+                    <div className="subtle" style={{ marginTop: 10 }}>
+                      Login to sync your portfolio across devices.
+                    </div>
 
-                <div className="subtle" style={{ marginTop: 10 }}>
-                  Login to sync your portfolio across devices.
-                </div>
+                    <div className="field" style={{ marginTop: 12 }}>
+                      <label>EMAIL</label>
+                      <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
+                    </div>
 
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label>EMAIL</label>
-                  <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
-                </div>
+                    <div className="field">
+                      <label>PASSWORD</label>
+                      <div className="pw-wrap">
+                        <input
+                          type={showPass ? "text" : "password"}
+                          value={pass}
+                          onChange={(e) => setPass(e.target.value)}
+                          placeholder="••••••••"
+                        />
+                        <button className="eye" onClick={() => setShowPass((v) => !v)} type="button">
+                          {showPass ? "🙈" : "👁️"}
+                        </button>
+                      </div>
+                    </div>
 
-                <div className="field">
-                  <label>PASSWORD</label>
-                  <div className="pw-wrap">
-                    <input
-                      type={showPass ? "text" : "password"}
-                      value={pass}
-                      onChange={(e) => setPass(e.target.value)}
-                      placeholder="••••••••"
-                    />
-                    <button
-                      className="eye"
-                      type="button"
-                      onClick={() => setShowPass((v) => !v)}
-                      title="Show/Hide"
-                    >
-                      {showPass ? "🙈" : "👁️"}
-                    </button>
-                  </div>
-                </div>
-
-                {authMode === "signup" && (
-                  <div className="field">
-                    <label>CONFIRM PASSWORD</label>
-                    <div className="pw-wrap">
-                      <input
-                        type={showPass2 ? "text" : "password"}
-                        value={pass2}
-                        onChange={(e) => setPass2(e.target.value)}
-                        placeholder="••••••••"
-                      />
-                      <button
-                        className="eye"
-                        type="button"
-                        onClick={() => setShowPass2((v) => !v)}
-                        title="Show/Hide"
-                      >
-                        {showPass2 ? "🙈" : "👁️"}
+                    <div className="modal-actions">
+                      <button className="small-btn primary" onClick={signIn}>
+                        Login
                       </button>
                     </div>
-                  </div>
+
+                    <button
+                      className="link-btn"
+                      onClick={() => {
+                        setAuthMode("reset");
+                        // in reset mode, we only send email (not set new pass)
+                      }}
+                    >
+                      Forgot password?
+                    </button>
+
+                    {/* RESET EMAIL (simple) */}
+                    {authMode === "reset" && (
+                      <>
+                        <div className="subtle" style={{ marginTop: 8 }}>
+                          Enter your email. We will send a reset link.
+                        </div>
+                        <div className="modal-actions">
+                          <button className="small-btn primary" onClick={sendResetEmail}>
+                            Send Reset Link
+                          </button>
+                          <button className="small-btn" onClick={() => setAuthMode("login")}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </>
                 )}
 
-                <div className="modal-actions">
-                  {authMode === "login" ? (
-                    <button className="small-btn primary" onClick={signIn}>
-                      Login
-                    </button>
-                  ) : (
-                    <button className="small-btn primary" onClick={signUp}>
-                      Create Account
-                    </button>
-                  )}
-                </div>
+                {/* SIGNUP */}
+                {authMode === "signup" && (
+                  <>
+                    <div className="subtle" style={{ marginTop: 10 }}>
+                      Create an account to keep your data across devices.
+                    </div>
 
-                {/* ✅ Forgot password below (no extra tab) */}
-                <button
-                  className="link-btn"
-                  onClick={() => {
-                    sendResetEmail();
-                  }}
-                >
-                  Forgot password?
-                </button>
+                    <div className="field" style={{ marginTop: 12 }}>
+                      <label>EMAIL</label>
+                      <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
+                    </div>
+
+                    <div className="field">
+                      <label>PASSWORD</label>
+                      <div className="pw-wrap">
+                        <input
+                          type={showPass ? "text" : "password"}
+                          value={pass}
+                          onChange={(e) => setPass(e.target.value)}
+                          placeholder="••••••••"
+                        />
+                        <button className="eye" onClick={() => setShowPass((v) => !v)} type="button">
+                          {showPass ? "🙈" : "👁️"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="field">
+                      <label>CONFIRM PASSWORD</label>
+                      <div className="pw-wrap">
+                        <input
+                          type={showPass2 ? "text" : "password"}
+                          value={pass2}
+                          onChange={(e) => setPass2(e.target.value)}
+                          placeholder="••••••••"
+                        />
+                        <button className="eye" onClick={() => setShowPass2((v) => !v)} type="button">
+                          {showPass2 ? "🙈" : "👁️"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="modal-actions">
+                      <button className="small-btn primary" onClick={signUp}>
+                        Create Account
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -877,6 +954,10 @@ export default function PortfolioApp({ user }) {
             <div className="subtle" style={{ marginTop: 10 }}>
               Loading…
             </div>
+          ) : subjects.length === 0 ? (
+            <div className="subtle" style={{ marginTop: 14 }}>
+              No subjects yet. Click <b>+ Add Subject</b>.
+            </div>
           ) : (
             <div className="grid" style={{ marginTop: 12 }}>
               {subjects.map((s) => (
@@ -893,53 +974,13 @@ export default function PortfolioApp({ user }) {
                     <div className="ttext">{s.title}</div>
                   </div>
 
-                  <div style={{ marginTop: 10 }}>
+                  <div className="modal-actions" style={{ marginTop: 10, justifyContent: "center" }}>
                     <button className="small-btn danger" onClick={() => deleteSubject(s.id)}>
                       Delete
                     </button>
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {/* Add Subject Modal */}
-          {showAddSubject && (
-            <div className="modal-overlay" onClick={() => setShowAddSubject(false)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Add Subject</div>
-
-                <div className="field">
-                  <label>SUBJECT NAME</label>
-                  <input value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} />
-                </div>
-
-                <div style={{ marginTop: 10, fontWeight: 900, fontSize: 12, color: "#0f172a", opacity: 0.75 }}>
-                  ICON
-                </div>
-
-                <div className="icon-grid">
-                  {ICONS.map((ic) => (
-                    <button
-                      key={ic}
-                      className={`icon-pick ${newSubIcon === ic ? "active" : ""}`}
-                      onClick={() => setNewSubIcon(ic)}
-                      type="button"
-                    >
-                      {ic}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="modal-actions">
-                  <button className="small-btn primary" onClick={addSubject}>
-                    Save
-                  </button>
-                  <button className="small-btn" onClick={() => setShowAddSubject(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
             </div>
           )}
         </div>
@@ -987,14 +1028,19 @@ export default function PortfolioApp({ user }) {
             ) : (
               files.map((f) => (
                 <div key={f.id} className="file-item">
-                  <div className="file-thumb" onClick={() => openPreview(f)} style={{ cursor: "pointer" }}>
+                  <div
+                    className="file-thumb"
+                    onClick={() => openPreview(f)}
+                    style={{ cursor: "pointer" }}
+                    title="Preview"
+                  >
                     {isImage(f.mime_type || "") ? "🖼️" : "📄"}
                   </div>
 
                   <div className="file-meta" onClick={() => openPreview(f)} style={{ cursor: "pointer" }}>
                     <div className="file-title">{f.title}</div>
                     <div className="file-sub">
-                      {fmtBytes(f.size)} • {new Date(f.created_at).toLocaleString()}
+                      {f.mime_type || "file"} • {fmtBytes(f.size || 0)}
                     </div>
                   </div>
 
@@ -1013,7 +1059,8 @@ export default function PortfolioApp({ user }) {
             )}
           </div>
 
-          <button className="fab" onClick={triggerUpload}>
+          {/* FAB */}
+          <button className="fab" onClick={triggerUpload} title="Upload">
             +
           </button>
 
@@ -1021,25 +1068,7 @@ export default function PortfolioApp({ user }) {
           {showUploadChooser && (
             <div className="modal-overlay" onClick={() => setShowUploadChooser(false)}>
               <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900 }}>Upload</div>
-                <div className="subtle" style={{ marginTop: 6 }}>
-                  Choose file or camera
-                </div>
-
-                <input
-                  ref={fileRef}
-                  type="file"
-                  style={{ display: "none" }}
-                  onChange={handleUploadAny}
-                />
-                <input
-                  ref={cameraRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: "none" }}
-                  onChange={handleUploadCamera}
-                />
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>Upload</div>
 
                 <div className="modal-actions">
                   <button className="small-btn primary" onClick={() => fileRef.current?.click()}>
@@ -1052,69 +1081,137 @@ export default function PortfolioApp({ user }) {
                     Cancel
                   </button>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* Preview modal */}
-          {preview && (
-            <div className="modal-overlay" onClick={() => setPreview(null)}>
-              <div className="preview-card" onClick={(e) => e.stopPropagation()}>
-                <div className="preview-top">
-                  <div className="preview-title">{preview.title}</div>
-                  <button className="small-btn" onClick={() => setPreview(null)}>
-                    Close
-                  </button>
-                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  style={{ display: "none" }}
+                  onChange={handleUploadAny}
+                />
 
-                <div className="preview-body">
-                  {isImage(preview.mime) ? (
-                    <img className="preview-img" src={preview.url} alt={preview.title} />
-                  ) : (
-                    <iframe className="preview-frame" src={preview.url} title="preview" />
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Options modal (rename / delete) */}
-          {optionsFor && (
-            <div className="modal-overlay" onClick={() => setOptionsFor(null)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900 }}>Options</div>
-
-                <div className="field">
-                  <label>RENAME</label>
-                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
-                </div>
-
-                <div className="modal-actions">
-                  <button className="small-btn primary" onClick={renameFile}>
-                    Save
-                  </button>
-                  <button className="small-btn danger" onClick={deleteFile}>
-                    Delete
-                  </button>
-                  <button className="small-btn" onClick={() => setOptionsFor(null)}>
-                    Cancel
-                  </button>
-                </div>
+                <input
+                  ref={cameraRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: "none" }}
+                  onChange={handleUploadCamera}
+                />
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Bottom Nav */}
+      {/* PREVIEW MODAL */}
+      {preview && (
+        <div className="modal-overlay preview-overlay" onClick={() => setPreview(null)}>
+          <div className="preview-card" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-top">
+              <div className="preview-title" title={preview.title}>
+                {preview.title}
+              </div>
+              <button className="small-btn" onClick={() => setPreview(null)}>
+                Close
+              </button>
+            </div>
+
+            <div className="preview-body">
+              {isImage(preview.mime) ? (
+                <img className="preview-img" src={preview.url} alt={preview.title} />
+              ) : (
+                <iframe className="preview-frame" title="preview" src={preview.url} style={{ height: "70vh" }} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OPTIONS MODAL (Rename/Delete) */}
+      {optionsFor && (
+        <div className="modal-overlay" onClick={() => setOptionsFor(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>Options</div>
+
+            <div className="field" style={{ marginTop: 0 }}>
+              <label>RENAME</label>
+              <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
+            </div>
+
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={renameFile}>
+                Save
+              </button>
+              <button className="small-btn danger" onClick={deleteFile}>
+                Delete
+              </button>
+              <button className="small-btn" onClick={() => setOptionsFor(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD SUBJECT MODAL */}
+      {showAddSubject && (
+        <div className="modal-overlay" onClick={() => setShowAddSubject(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>Add Subject</div>
+
+            <div className="field" style={{ marginTop: 0 }}>
+              <label>SUBJECT NAME</label>
+              <input
+                value={newSubTitle}
+                onChange={(e) => setNewSubTitle(e.target.value)}
+                placeholder="e.g. Mathematics"
+              />
+            </div>
+
+            <div style={{ fontWeight: 900, marginTop: 12, marginBottom: 8 }}>Choose Icon</div>
+            <div className="icon-grid">
+              {ICONS.map((ic) => (
+                <button
+                  key={ic}
+                  className={"icon-pick " + (newSubIcon === ic ? "active" : "")}
+                  onClick={() => setNewSubIcon(ic)}
+                  type="button"
+                >
+                  {ic}
+                </button>
+              ))}
+            </div>
+
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={addSubject}>
+                Save
+              </button>
+              <button className="small-btn" onClick={() => setShowAddSubject(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom nav */}
       <div className="bottom-nav">
-        <button className={`bn ${screen === "home" ? "active" : ""}`} onClick={() => setScreen("home")}>
+        <button
+          className={"bn " + (screen === "home" ? "active" : "")}
+          onClick={() => setScreen("home")}
+        >
           🏠 <span>Home</span>
         </button>
-        <button className={`bn ${screen === "subjects" ? "active" : ""}`} onClick={() => setScreen("subjects")}>
+        <button
+          className={"bn " + (screen === "subjects" ? "active" : "")}
+          onClick={() => setScreen("subjects")}
+        >
           📘 <span>Subjects</span>
         </button>
-        <button className={`bn ${screen === "profile" ? "active" : ""}`} onClick={() => setScreen("profile")}>
+        <button
+          className={"bn " + (screen === "profile" ? "active" : "")}
+          onClick={() => setScreen("profile")}
+        >
           👤 <span>Profile</span>
         </button>
       </div>

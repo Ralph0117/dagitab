@@ -1,3 +1,4 @@
+// src/PortfolioApp.jsx  (PART 1 / 2)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 
@@ -26,12 +27,17 @@ const ICONS = ["📘", "📄", "📁", "🧪", "💻", "📐", "🧠", "🎨", "
 
 export default function PortfolioApp({ user }) {
   // routing
-  const [screen, setScreen] = useState(user ? "home" : "auth"); // auth | home | profile | subjects | folders | files
+  const [screen, setScreen] = useState(user ? "home" : "auth"); // auth | setpw | home | profile | subjects | folders | files
   const [toast, setToast] = useState("");
 
   // auth ui
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+
+  // forgot/reset
+  const [authMode, setAuthMode] = useState("login"); // login | signup | forgot
+  const [resetEmail, setResetEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   // profile
   const [profile, setProfile] = useState({
@@ -42,7 +48,6 @@ export default function PortfolioApp({ user }) {
     avatar_path: null,
     logo_path: null,
   });
-
   const [avatarSrc, setAvatarSrc] = useState(null);
   const [logoSrc, setLogoSrc] = useState(null);
 
@@ -90,17 +95,24 @@ export default function PortfolioApp({ user }) {
     if (screen === "subjects") return "SUBJECTS";
     if (screen === "folders") return "FOLDERS";
     if (screen === "files") return "FILES";
+    if (screen === "setpw") return "RESET";
     return "DAGITAB";
   }, [screen]);
 
   // ========= AUTH =========
   async function signIn() {
-    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password: pass,
+    });
     if (error) return notify(error.message);
   }
 
   async function signUp() {
-    const { error } = await supabase.auth.signUp({ email, password: pass });
+    const { error } = await supabase.auth.signUp({
+      email,
+      password: pass,
+    });
     if (error) return notify(error.message);
     notify("Account created. If email verification is ON, check your email.");
   }
@@ -109,21 +121,59 @@ export default function PortfolioApp({ user }) {
     await supabase.auth.signOut();
   }
 
-  // ========= PROFILE (SIGNED URL HELPERS) =========
-  async function refreshSignedUrl(path, setter) {
+  // ========= FORGOT / RESET PASSWORD =========
+  async function sendResetLink() {
+    const em = resetEmail.trim();
+    if (!em) return notify("Enter your email");
+
+    const { error } = await supabase.auth.resetPasswordForEmail(em, {
+      redirectTo: window.location.origin, // works for localhost + netlify
+    });
+
+    if (error) return notify(error.message);
+    notify("Password reset link sent. Check your email.");
+    setAuthMode("login");
+  }
+
+  // If user clicks reset link, Supabase triggers PASSWORD_RECOVERY
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setScreen("setpw");
+      }
+    });
+    return () => sub?.subscription?.unsubscribe?.();
+  }, []);
+
+  async function updatePassword() {
+    if (!newPassword || newPassword.length < 6) return notify("Password must be at least 6 characters");
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) return notify(error.message);
+
+    notify("Password updated. Login again.");
+    setNewPassword("");
+    await supabase.auth.signOut();
+    setScreen("auth");
+  }
+
+  // ========= PROFILE =========
+  async function refreshSignedImage(path, setter) {
     if (!path) {
       setter(null);
       return;
     }
-
-    // signed url works for both public/private buckets
     const { data, error } = await supabase.storage.from("portfolio").createSignedUrl(path, 60 * 30);
     if (error) {
-      console.error("createSignedUrl error:", error);
+      console.error(error);
       setter(null);
       return;
     }
     setter(data?.signedUrl ?? null);
+  }
+
+  function isFirstTimeProfile(p) {
+    if (!p) return true;
+    return !p.name || p.name.trim() === "" || p.name === "STUDENT 1";
   }
 
   async function ensureProfile(u) {
@@ -140,7 +190,7 @@ export default function PortfolioApp({ user }) {
       return;
     }
 
-    // ✅ Only insert if missing (never overwrite)
+    // ✅ only insert if missing (do NOT overwrite)
     if (!data) {
       const { error: insErr } = await supabase.from("profiles").insert({
         id: u.id,
@@ -171,16 +221,22 @@ export default function PortfolioApp({ user }) {
     }
 
     if (data) {
-      setProfile(data);
-      await refreshSignedUrl(data.avatar_path, setAvatarSrc);
-      await refreshSignedUrl(data.logo_path, setLogoSrc);
+      setProfile((prev) => ({ ...prev, ...data }));
+      await refreshSignedImage(data.avatar_path, setAvatarSrc);
+      await refreshSignedImage(data.logo_path, setLogoSrc);
+
+      // ✅ First login -> force profile completion
+      if (isFirstTimeProfile(data)) {
+        setScreen("profile");
+        notify("Please complete your profile first.");
+      }
     }
   }
 
   async function saveProfile(next) {
     if (!user?.id) return;
 
-    // optimistic
+    // optimistic UI
     setProfile(next);
 
     const { data, error } = await supabase
@@ -201,9 +257,9 @@ export default function PortfolioApp({ user }) {
     }
 
     if (data) {
-      setProfile(data);
-      await refreshSignedUrl(data.avatar_path, setAvatarSrc);
-      await refreshSignedUrl(data.logo_path, setLogoSrc);
+      setProfile((prev) => ({ ...prev, ...data }));
+      await refreshSignedImage(data.avatar_path, setAvatarSrc);
+      await refreshSignedImage(data.logo_path, setLogoSrc);
     }
 
     notify("Profile saved");
@@ -212,8 +268,7 @@ export default function PortfolioApp({ user }) {
   async function uploadAvatar(file) {
     if (!user?.id || !file) return;
 
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-    const path = `${user.id}/profile/avatar.${ext}`;
+    const path = `${user.id}/profile/avatar.jpg`;
 
     const { error: upErr } = await supabase.storage.from("portfolio").upload(path, file, {
       upsert: true,
@@ -243,8 +298,7 @@ export default function PortfolioApp({ user }) {
   async function uploadLogo(file) {
     if (!user?.id || !file) return;
 
-    const ext = (file.name.split(".").pop() || "png").toLowerCase();
-    const path = `${user.id}/branding/logo.${ext}`;
+    const path = `${user.id}/branding/logo.png`;
 
     const { error: upErr } = await supabase.storage.from("portfolio").upload(path, file, {
       upsert: true,
@@ -271,7 +325,7 @@ export default function PortfolioApp({ user }) {
     notify("Logo updated");
   }
 
-  // run once when user id becomes available
+  // ✅ init when user id becomes available (prevents id=undefined)
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
@@ -349,12 +403,14 @@ export default function PortfolioApp({ user }) {
 
   async function deleteSubject(subjectId) {
     if (!user?.id) return;
+
+    if (subjects.length <= 1) return notify("You must keep at least 1 subject");
     if (!confirm("Delete this subject?")) return;
 
+    // delete file rows for this subject (storage objects not removed here)
     await supabase.from("files").delete().eq("user_id", user.id).eq("subject_id", subjectId);
 
     const { error } = await supabase.from("subjects").delete().eq("user_id", user.id).eq("id", subjectId);
-
     if (error) {
       console.error(error);
       return notify("Failed to delete subject");
@@ -369,6 +425,8 @@ export default function PortfolioApp({ user }) {
     notify("Deleted");
   }
 
+  // ====== (PART 2 continues below) ======
+// src/PortfolioApp.jsx  (PART 2 / 2)
   // ========= FILES =========
   async function loadFiles(subjectId, cat) {
     if (!user?.id) return;
@@ -392,6 +450,11 @@ export default function PortfolioApp({ user }) {
     setFiles(data ?? []);
   }
 
+  function openFolders(subjectRow) {
+    setSelectedSubject(subjectRow);
+    setScreen("folders");
+  }
+
   function openFiles(cat) {
     if (!selectedSubject) return;
     setCategory(cat);
@@ -407,7 +470,10 @@ export default function PortfolioApp({ user }) {
     const f = file;
     if (!f || !user?.id || !selectedSubject || !category) return;
 
+    // ✅ safe filename for storage (fix signed url + mobile issues)
     const safeName = f.name.replace(/[^\w.\-]+/g, "_");
+
+    // ✅ mobile-safe uid (fix crypto error)
     const objectPath = `${user.id}/subjects/${selectedSubject.id}/${category}/${uid()}-${safeName}`;
 
     const { error: upErr } = await supabase.storage.from("portfolio").upload(objectPath, f, {
@@ -461,7 +527,11 @@ export default function PortfolioApp({ user }) {
       console.error(error);
       return notify("Preview failed");
     }
-    setPreview({ url: data.signedUrl, title: fileRow.title, mime: fileRow.mime_type || "" });
+    setPreview({
+      url: data.signedUrl,
+      title: fileRow.title,
+      mime: fileRow.mime_type || "",
+    });
   }
 
   async function renameFile() {
@@ -507,7 +577,7 @@ export default function PortfolioApp({ user }) {
     await loadFiles(selectedSubject.id, category);
   }
 
-  // Back navigation
+  // ========= NAV =========
   function back() {
     if (screen === "profile") setScreen("home");
     else if (screen === "subjects") setScreen("home");
@@ -516,121 +586,173 @@ export default function PortfolioApp({ user }) {
     else setScreen("home");
   }
 
-  // ========= AUTH PAGE =========
- // put this near your other states (top of PortfolioApp)
-const [appLogo, setAppLogo] = useState(
-  localStorage.getItem("dagitab_app_logo") || null
-);
+  function go(tab) {
+    // basic guard: first time must complete profile
+    if (user?.id && isFirstTimeProfile(profile) && tab !== "profile") {
+      notify("Complete your profile first.");
+      return setScreen("profile");
+    }
 
-// ========= AUTH PAGE =========
-if (screen === "auth") {
-  return (
-    <div className="app-shell">
-      <div className="topbar">
-        <div className="brand">DAGITAB</div>
-        <div />
-      </div>
+    if (tab === "home") setScreen("home");
+    if (tab === "subjects") setScreen("subjects");
+    if (tab === "profile") setScreen("profile");
+  }
 
-      <div className="white-surface">
-        <div className="auth-card">
-          {/* APP LOGO (Option B – permanent on this device via localStorage) */}
-          <div
-            onClick={() => document.getElementById("appLogoInput").click()}
-            style={{
-              width: 130,
-              height: 130,
-              borderRadius: 18,
-              margin: "0 auto 16px",
-              border: "3px solid rgba(30,73,214,0.9)",
-              background: "rgba(30,73,214,0.08)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-              cursor: "pointer",
-              userSelect: "none",
-            }}
-            title="Tap to change logo"
-          >
-            {appLogo ? (
-              <img
-                src={appLogo}
-                alt="DAGITAB Logo"
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
+  // ========= AUTH UI =========
+  if (screen === "auth") {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="brand">DAGITAB</div>
+          <div />
+        </div>
+
+        <div className="white-surface">
+          <div className="auth-card">
+            {/* Logo frame (uploads only after login). Shows last saved logo if exists + user is already signed-in. */}
+            <div
+              style={{
+                width: 120,
+                height: 120,
+                borderRadius: 14,
+                border: "3px solid rgba(30,73,214,0.95)",
+                margin: "4px auto 14px",
+                background: "rgba(30,73,214,0.06)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                userSelect: "none",
+              }}
+              title="Logo"
+            >
+              {logoSrc ? (
+                <img src={logoSrc} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <div style={{ fontWeight: 900, color: "#1e49d6" }}>LOGO</div>
+              )}
+            </div>
+
+            <div className="auth-banner">
+              Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                className={`small-btn ${authMode === "login" ? "primary" : ""}`}
+                onClick={() => setAuthMode("login")}
+                type="button"
+              >
+                Login
+              </button>
+              <button
+                className={`small-btn ${authMode === "signup" ? "primary" : ""}`}
+                onClick={() => setAuthMode("signup")}
+                type="button"
+              >
+                Create
+              </button>
+              <button
+                className={`small-btn ${authMode === "forgot" ? "primary" : ""}`}
+                onClick={() => setAuthMode("forgot")}
+                type="button"
+              >
+                Forgot
+              </button>
+            </div>
+
+            {authMode !== "forgot" ? (
+              <>
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label>EMAIL</label>
+                  <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
+                </div>
+
+                <div className="field">
+                  <label>PASSWORD</label>
+                  <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" />
+                </div>
+
+                <div className="modal-actions">
+                  {authMode === "login" ? (
+                    <button className="small-btn primary" onClick={signIn}>
+                      Login
+                    </button>
+                  ) : (
+                    <button className="small-btn primary" onClick={signUp}>
+                      Create Account
+                    </button>
+                  )}
+                </div>
+              </>
             ) : (
-              <div style={{ fontWeight: 900, color: "#1e49d6", fontSize: 20 }}>
-                DAGITAB
-              </div>
+              <>
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label>EMAIL</label>
+                  <input
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    placeholder="Enter your account email"
+                  />
+                </div>
+                <div className="modal-actions">
+                  <button className="small-btn primary" onClick={sendResetLink}>
+                    Send Reset Link
+                  </button>
+                </div>
+                <div className="subtle" style={{ marginTop: 10 }}>
+                  We will email you a reset link. After you open it, you’ll return here and set a new password.
+                </div>
+              </>
             )}
           </div>
+        </div>
 
-          <input
-            id="appLogoInput"
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = ""; // important (mobile reselect)
-              if (!file) return;
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
 
-              const reader = new FileReader();
-              reader.onload = () => {
-                const dataUrl = reader.result;
-                localStorage.setItem("dagitab_app_logo", dataUrl);
-                setAppLogo(dataUrl);
-                notify("Logo saved on this device");
-              };
-              reader.readAsDataURL(file);
-            }}
-          />
+  // ========= PASSWORD RESET PAGE =========
+  if (screen === "setpw") {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="brand">RESET PASSWORD</div>
+          <div />
+        </div>
 
-          <div className="auth-banner">
-            Digital Application for Guiding and Improving Tasks, Academics, and
-            Bibliographies for students
-          </div>
+        <div className="white-surface">
+          <div className="auth-card">
+            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>Set a new password</div>
+            <div className="subtle">Enter your new password below.</div>
 
-          <div className="subtle" style={{ marginTop: 10 }}>
-            Login to sync your portfolio across devices.
-          </div>
+            <div className="field" style={{ marginTop: 12 }}>
+              <label>NEW PASSWORD</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="••••••••"
+              />
+            </div>
 
-          <div className="field" style={{ marginTop: 12 }}>
-            <label>EMAIL</label>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Enter email"
-              autoComplete="email"
-            />
-          </div>
-
-          <div className="field">
-            <label>PASSWORD</label>
-            <input
-              type="password"
-              value={pass}
-              onChange={(e) => setPass(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-            />
-          </div>
-
-          <div className="modal-actions">
-            <button className="small-btn primary" onClick={signIn}>
-              Login
-            </button>
-            <button className="small-btn" onClick={signUp}>
-              Create Account
-            </button>
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={updatePassword}>
+                Update Password
+              </button>
+              <button className="small-btn" onClick={() => setScreen("auth")}>
+                Back
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {toast && <div className="toast">{toast}</div>}
-    </div>
-  );
-}
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
 
   // ========= MAIN UI =========
   return (
@@ -705,7 +827,52 @@ if (screen === "auth") {
             }}
           />
 
-          <div className="field">
+          {/* optional: logo uploader here too (this one works because you are logged in) */}
+          <div className="profile-card" style={{ marginTop: 12 }}>
+            <div
+              onClick={() => document.getElementById("logoInput").click()}
+              style={{
+                width: 70,
+                height: 70,
+                borderRadius: 12,
+                border: "2px solid rgba(30,73,214,0.65)",
+                background: "rgba(30,73,214,0.06)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                cursor: "pointer",
+              }}
+              title="Change logo"
+            >
+              {logoSrc ? (
+                <img src={logoSrc} alt="logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <div style={{ fontWeight: 900, color: "#1e49d6" }}>LOGO</div>
+              )}
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>App Logo</div>
+              <div className="subtle" style={{ margin: 0 }}>
+                Tap to upload/change
+              </div>
+            </div>
+          </div>
+
+          <input
+            id="logoInput"
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) uploadLogo(f);
+            }}
+          />
+
+          <div className="field" style={{ marginTop: 12 }}>
             <label>FULL NAME</label>
             <input
               value={profile.name || ""}
@@ -763,18 +930,20 @@ if (screen === "auth") {
               {subjects.map((s) => (
                 <div key={s.id} className="tile">
                   <div
-                    onClick={() => {
-                      setSelectedSubject(s);
-                      setScreen("folders");
-                    }}
+                    onClick={() => openFolders(s)}
                     role="button"
                     style={{ cursor: "pointer" }}
+                    title="Open"
                   >
                     <div className="ticon">{s.icon}</div>
                     <div className="ttext">{s.title}</div>
                   </div>
 
-                  <div style={{ marginTop: 10 }}>
+                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <button className="small-btn" onClick={() => openFolders(s)}>
+                      Open
+                    </button>
+                    {/* ✅ Delete button for any subject (still blocks deleting last one) */}
                     <button className="small-btn danger" onClick={() => deleteSubject(s.id)}>
                       Delete
                     </button>
@@ -784,19 +953,22 @@ if (screen === "auth") {
             </div>
           )}
 
-          {/* ADD SUBJECT MODAL */}
+          {/* Add Subject Modal */}
           {showAddSubject && (
-            <div className="modal-overlay" onClick={() => setShowAddSubject(false)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>Add Subject</div>
-
-                <div className="field">
-                  <label>SUBJECT NAME</label>
-                  <input value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} placeholder="e.g. Math" />
+            <div className="modal">
+              <div className="modal-card">
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Add Subject</div>
+                <div className="subtle" style={{ marginTop: 4 }}>
+                  Name + choose an icon.
                 </div>
 
-                <div style={{ marginTop: 10, fontWeight: 800 }}>Choose Icon</div>
-                <div className="icon-grid" style={{ marginTop: 8 }}>
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label>SUBJECT NAME</label>
+                  <input value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} placeholder="e.g., Math" />
+                </div>
+
+                <div style={{ marginTop: 10, fontWeight: 900, fontSize: 12, color: "#0f172a" }}>ICON</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
                   {ICONS.map((ic) => (
                     <button
                       key={ic}
@@ -809,12 +981,12 @@ if (screen === "auth") {
                   ))}
                 </div>
 
-                <div className="modal-actions" style={{ marginTop: 12 }}>
+                <div className="modal-actions" style={{ marginTop: 14 }}>
+                  <button className="small-btn primary" onClick={addSubject}>
+                    Add
+                  </button>
                   <button className="small-btn" onClick={() => setShowAddSubject(false)}>
                     Cancel
-                  </button>
-                  <button className="small-btn primary" onClick={addSubject}>
-                    Save
                   </button>
                 </div>
               </div>
@@ -869,10 +1041,12 @@ if (screen === "auth") {
                     {isImage(f.mime_type) ? "🖼️" : "📄"}
                   </div>
 
-                  <div className="file-meta" onClick={() => openPreview(f)} style={{ cursor: "pointer" }}>
-                    <div className="file-title">{f.title}</div>
-                    <div className="file-sub">
-                      {fmtBytes(f.size)} {f.created_at ? `• ${new Date(f.created_at).toLocaleString()}` : ""}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="file-title" title={f.title}>
+                      {f.title}
+                    </div>
+                    <div className="subtle" style={{ margin: 0 }}>
+                      {fmtBytes(f.size)} • {new Date(f.created_at).toLocaleString()}
                     </div>
                   </div>
 
@@ -899,21 +1073,20 @@ if (screen === "auth") {
 
           {/* Upload chooser */}
           {showUploadChooser && (
-            <div className="modal-overlay" onClick={() => setShowUploadChooser(false)}>
+            <div className="modal" onClick={() => setShowUploadChooser(false)}>
               <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>Upload</div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Upload</div>
+                <div className="subtle" style={{ marginTop: 4 }}>
+                  Choose source:
+                </div>
 
-                <button className="small-btn primary" onClick={() => fileRef.current?.click()} type="button">
-                  Choose File
-                </button>
-
-                <div style={{ height: 10 }} />
-
-                <button className="small-btn" onClick={() => cameraRef.current?.click()} type="button">
-                  Use Camera
-                </button>
-
-                <div className="modal-actions" style={{ marginTop: 12 }}>
+                <div className="modal-actions" style={{ marginTop: 14 }}>
+                  <button className="small-btn primary" onClick={() => fileRef.current?.click()} type="button">
+                    📁 File
+                  </button>
+                  <button className="small-btn" onClick={() => cameraRef.current?.click()} type="button">
+                    📷 Camera
+                  </button>
                   <button className="small-btn" onClick={() => setShowUploadChooser(false)} type="button">
                     Cancel
                   </button>
@@ -922,29 +1095,49 @@ if (screen === "auth") {
                 <input
                   ref={fileRef}
                   type="file"
-                  hidden
+                  style={{ display: "none" }}
                   onChange={handleUploadAny}
                 />
-
                 <input
                   ref={cameraRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
-                  hidden
+                  style={{ display: "none" }}
                   onChange={handleUploadCamera}
                 />
               </div>
             </div>
           )}
 
-          {/* File options modal */}
-          {optionsFor && (
-            <div className="modal-overlay" onClick={() => setOptionsFor(null)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>File Options</div>
+          {/* Preview modal */}
+          {preview && (
+            <div className="modal" onClick={() => setPreview(null)}>
+              <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+                <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>{preview.title}</div>
 
-                <div className="field">
+                {isImage(preview.mime) ? (
+                  <img src={preview.url} alt="preview" style={{ width: "100%", borderRadius: 12 }} />
+                ) : (
+                  <iframe title="preview" src={preview.url} style={{ width: "100%", height: 520, border: 0 }} />
+                )}
+
+                <div className="modal-actions" style={{ marginTop: 12 }}>
+                  <button className="small-btn" onClick={() => setPreview(null)} type="button">
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Options modal */}
+          {optionsFor && (
+            <div className="modal" onClick={() => setOptionsFor(null)}>
+              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>File Options</div>
+
+                <div className="field" style={{ marginTop: 12 }}>
                   <label>RENAME</label>
                   <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
                 </div>
@@ -963,37 +1156,30 @@ if (screen === "auth") {
               </div>
             </div>
           )}
-
-          {/* Preview modal */}
-          {preview && (
-            <div className="modal-overlay" onClick={() => setPreview(null)}>
-              <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>{preview.title}</div>
-
-                {isImage(preview.mime) ? (
-                  <img src={preview.url} alt={preview.title} style={{ width: "100%", borderRadius: 12 }} />
-                ) : (
-                  <div className="subtle">
-                    Preview for this file type isn’t embedded. Use the link below.
-                  </div>
-                )}
-
-                <div style={{ marginTop: 10 }}>
-                  <a href={preview.url} target="_blank" rel="noreferrer">
-                    Open / Download
-                  </a>
-                </div>
-
-                <div className="modal-actions" style={{ marginTop: 12 }}>
-                  <button className="small-btn" onClick={() => setPreview(null)} type="button">
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
+
+      {/* ✅ Bottom Navigation (easy navigation) */}
+      <div className="bottom-nav">
+        <button className={`navbtn ${screen === "home" ? "active" : ""}`} onClick={() => go("home")} type="button">
+          <div className="navico">🏠</div>
+          <div className="navtxt">Home</div>
+        </button>
+
+        <button
+          className={`navbtn ${screen === "subjects" || screen === "folders" || screen === "files" ? "active" : ""}`}
+          onClick={() => go("subjects")}
+          type="button"
+        >
+          <div className="navico">📚</div>
+          <div className="navtxt">Subjects</div>
+        </button>
+
+        <button className={`navbtn ${screen === "profile" ? "active" : ""}`} onClick={() => go("profile")} type="button">
+          <div className="navico">👤</div>
+          <div className="navtxt">Profile</div>
+        </button>
+      </div>
 
       {toast && <div className="toast">{toast}</div>}
     </div>

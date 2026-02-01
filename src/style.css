@@ -367,3 +367,40 @@ body{
   background: #ef4444;
   color:#fff;
 }
+.bottom-nav{
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 64px;
+  background: #ffffff;
+  border-top: 1px solid rgba(15,23,42,0.12);
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 50;
+}
+
+.nav-btn{
+  border: 0;
+  background: transparent;
+  font-weight: 800;
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.nav-btn span{
+  font-size: 12px;
+}
+
+.nav-btn.active{
+  opacity: 1;
+}
+
+.white-surface{
+  padding-bottom: 84px; /* makes space so content isn't hidden behind nav */
+}

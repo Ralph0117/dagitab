@@ -1,30 +1,20 @@
+// src/PortfolioApp.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 
-/* =========================================================
-   GLOBAL CONSTANTS (MUST EXIST ONLY ONCE)
-   ========================================================= */
-
-const ICONS = ["📘","📄","📁","🧪","💻","📐","🧠","🎨","📷","🔧","🧬","🧾"];
-
-// one global logo for whole app (login + dashboard)
-const GLOBAL_LOGO_OBJECT_PATH = "branding/global_logo.png";
-
-/* =========================================================
-   UTILITIES
-   ========================================================= */
-
-// Mobile-safe unique id (no crypto.randomUUID)
+/** ✅ Mobile-safe unique id (replaces crypto.randomUUID on some phones) */
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
 function fmtBytes(bytes = 0) {
   if (!bytes) return "";
-  const units = ["B","KB","MB","GB"];
-  let i = 0, n = bytes;
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let n = bytes;
   while (n >= 1024 && i < units.length - 1) {
-    n /= 1024; i++;
+    n /= 1024;
+    i++;
   }
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
@@ -33,151 +23,147 @@ function isImage(mime = "") {
   return mime.startsWith("image/");
 }
 
-/* =========================================================
-   MAIN APP
-   ========================================================= */
+const ICONS = ["📘", "📄", "📁", "🧪", "💻", "📐", "🧠", "🎨", "📷", "🔧", "🧬", "🧾"];
 
 export default function PortfolioApp({ user }) {
-
-  /* ================= ROUTING ================= */
-  const [screen, setScreen] = useState(user ? "home" : "auth");
+  // routing
+  const [screen, setScreen] = useState(user ? "home" : "auth"); // auth | setupProfile | home | profile | subjects | folders | files
   const [toast, setToast] = useState("");
 
-  /* ================= AUTH ================= */
+  // auth UI tabs (BRING BACK)
+  const [authTab, setAuthTab] = useState("login"); // login | signup | forgot
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
-  const [pass2, setPass2] = useState(""); // confirm password
-  const [showPass, setShowPass] = useState(false);
+  const [pass2, setPass2] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  /* ================= PROFILE ================= */
+  // profile
   const [profile, setProfile] = useState({
     id: null,
     name: "",
     section: "",
     school: "",
-    avatar_path: null
+    avatar_path: null,
   });
-
   const [avatarSrc, setAvatarSrc] = useState(null);
 
-  /* ================= GLOBAL LOGO ================= */
-  const [logoUrl, setLogoUrl] = useState(null);
-
-  /* ================= SUBJECTS ================= */
+  // subjects
   const [subjects, setSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
 
-  /* ================= FILES ================= */
+  // add subject modal (BRING BACK, improved UI)
+  const [showAddSubject, setShowAddSubject] = useState(false);
+  const [newSubTitle, setNewSubTitle] = useState("");
+  const [newSubIcon, setNewSubIcon] = useState("📘");
+
+  // delete-all subjects confirm modal
+  const [showDeleteAll, setShowDeleteAll] = useState(false);
+
+  // nav
+  const [selectedSubject, setSelectedSubject] = useState(null);
+  const [category, setCategory] = useState(null); // performance | written
+
+  // files
   const [files, setFiles] = useState([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
 
-  /* ================= NAV ================= */
-  const [selectedSubject, setSelectedSubject] = useState(null);
-  const [category, setCategory] = useState(null);
-
-  /* ================= MODALS ================= */
-  const [preview, setPreview] = useState(null);
-  const [optionsFor, setOptionsFor] = useState(null);
-  const [renameTitle, setRenameTitle] = useState("");
-
-  /* ================= FILE INPUTS ================= */
+  // upload chooser (mobile)
+  const [showUploadChooser, setShowUploadChooser] = useState(false);
   const fileRef = useRef(null);
   const cameraRef = useRef(null);
 
-  /* =========================================================
-     TOAST
-     ========================================================= */
+  // preview (BETTER preview handling)
+  const [preview, setPreview] = useState(null); // {url,title,mime,isImg}
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  // file options (3-dots)
+  const [optionsFor, setOptionsFor] = useState(null); // file row
+  const [renameTitle, setRenameTitle] = useState("");
+  const [showRename, setShowRename] = useState(false);
+
   function notify(msg) {
     setToast(msg);
-    clearTimeout(notify._t);
-    notify._t = setTimeout(() => setToast(""), 1800);
+    window.clearTimeout(notify._t);
+    notify._t = window.setTimeout(() => setToast(""), 1800);
   }
 
-  /* =========================================================
-     SYNC SCREEN WITH AUTH
-     ========================================================= */
+  // keep screen in sync with user
   useEffect(() => {
-    if (user) {
-      setScreen(s => (s === "auth" ? "home" : s));
-    } else {
-      setScreen("auth");
-    }
+    setScreen(user ? (prev) => (prev === "auth" ? "home" : prev) : "auth");
   }, [user]);
 
-  /* =========================================================
-     LOAD GLOBAL LOGO (once)
-     ========================================================= */
-  async function loadGlobalLogo() {
-    const { data, error } = await supabase.storage
-      .from("portfolio")
-      .createSignedUrl(GLOBAL_LOGO_OBJECT_PATH, 60 * 60);
+  const titleLine = useMemo(() => {
+    if (screen === "home") return "DAGITAB";
+    if (screen === "profile") return "PROFILE";
+    if (screen === "subjects") return "SUBJECTS";
+    if (screen === "folders") return "FOLDERS";
+    if (screen === "files") return "FILES";
+    if (screen === "setupProfile") return "SETUP PROFILE";
+    return "DAGITAB";
+  }, [screen]);
 
-    if (!error && data?.signedUrl) {
-      setLogoUrl(data.signedUrl);
-    } else {
-      setLogoUrl(null);
-    }
-  }
-
-  useEffect(() => {
-    loadGlobalLogo();
-  }, []);
-
-  /* =========================================================
-     AUTH
-     ========================================================= */
-
+  // =========================
+  // AUTH
+  // =========================
   async function signIn() {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password: pass
-    });
-    if (error) notify(error.message);
+    if (!email || !pass) return notify("Enter email and password");
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    setBusy(false);
+    if (error) return notify(error.message);
   }
 
   async function signUp() {
-    if (pass !== pass2) {
-      notify("Passwords do not match");
-      return;
+    if (!email || !pass) return notify("Enter email and password");
+    if (pass.length < 6) return notify("Password must be at least 6 characters");
+    if (pass !== pass2) return notify("Passwords do not match");
+
+    setBusy(true);
+    const { data, error } = await supabase.auth.signUp({ email, password: pass });
+    setBusy(false);
+
+    if (error) return notify(error.message);
+
+    // If email confirmation is OFF, session may exist immediately -> guide to profile setup
+    const u = data?.user;
+    if (u?.id) {
+      notify("Account created. Set up your profile.");
+      setAuthTab("login");
+      // App.jsx will pass user after auth state change; we’ll decide setup in init effect.
+    } else {
+      notify("Account created. Check your email if verification is enabled.");
+      setAuthTab("login");
     }
+  }
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password: pass
-    });
+  async function sendReset() {
+    if (!email) return notify("Enter your email first");
+    setBusy(true);
 
-    if (error) notify(error.message);
-    else notify("Account created — check your email");
+    // ✅ same-tab flow: user clicks email link -> returns to SAME APP url (Netlify)
+    const redirectTo = window.location.origin; // keeps it on same domain/tab
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+
+    setBusy(false);
+    if (error) return notify(error.message);
+    notify("Password reset email sent. Open it, then come back here.");
   }
 
   async function signOut() {
     await supabase.auth.signOut();
   }
-  /* =========================================================
-     ROUTE TITLE
-     ========================================================= */
-  const titleLine = useMemo(() => {
-    if (screen === "home") return "DAGITAB";
-    if (screen === "profile" || screen === "profile_setup") return "PROFILE";
-    if (screen === "subjects") return "SUBJECTS";
-    if (screen === "folders") return "FOLDERS";
-    if (screen === "files") return "FILES";
-    return "DAGITAB";
-  }, [screen]);
 
-  /* =========================================================
-     PROFILE HELPERS
-     ========================================================= */
-
+  // =========================
+  // PROFILE HELPERS
+  // =========================
   async function refreshAvatarSignedUrl(avatarPath) {
     if (!avatarPath) {
       setAvatarSrc(null);
       return;
     }
-    const { data, error } = await supabase.storage
-      .from("portfolio")
-      .createSignedUrl(avatarPath, 60 * 30);
-
+    const { data, error } = await supabase.storage.from("portfolio").createSignedUrl(avatarPath, 60 * 30);
     if (error) {
       console.error(error);
       setAvatarSrc(null);
@@ -201,13 +187,14 @@ export default function PortfolioApp({ user }) {
     }
 
     if (!data) {
+      // ✅ Create blank profile (NO default name to avoid “resetting”)
       const { error: insErr } = await supabase.from("profiles").insert({
         id: u.id,
         name: "",
         section: "",
         school: "",
-        avatar_path: null,
         updated_at: new Date().toISOString(),
+        avatar_path: null,
       });
       if (insErr) console.error("ensureProfile insert error:", insErr);
     }
@@ -230,64 +217,53 @@ export default function PortfolioApp({ user }) {
     if (data) {
       setProfile(data);
       await refreshAvatarSignedUrl(data.avatar_path);
-      // if first-time profile is blank, guide to setup
-      const needs =
-        !String(data.name || "").trim() ||
-        !String(data.section || "").trim() ||
-        !String(data.school || "").trim();
-      if (needs && screen !== "profile_setup") setScreen("profile_setup");
+      return data;
     }
+    return null;
   }
 
   async function saveProfile(next) {
     if (!user?.id) return;
 
-    const payload = {
-      name: String(next.name || "").trim(),
-      section: String(next.section || "").trim(),
-      school: String(next.school || "").trim(),
-      updated_at: new Date().toISOString(),
-    };
+    // optimistic
+    setProfile(next);
 
     const { data, error } = await supabase
       .from("profiles")
-      .update(payload)
+      .update({
+        name: next.name ?? "",
+        section: next.section ?? "",
+        school: next.school ?? "",
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", user.id)
       .select("id,name,section,school,avatar_path,updated_at")
       .maybeSingle();
 
     if (error) {
       console.error("saveProfile error:", error);
-      notify("Failed to save profile");
-      return;
+      return notify("Failed to save profile");
     }
 
     if (data) {
       setProfile(data);
       await refreshAvatarSignedUrl(data.avatar_path);
     }
-
     notify("Profile saved");
-
-    // if this was setup flow, continue to dashboard
-    if (screen === "profile_setup") setScreen("home");
   }
 
   async function uploadAvatar(file) {
     if (!user?.id || !file) return;
 
     const path = `${user.id}/profile/avatar.jpg`;
-
     const { error: upErr } = await supabase.storage.from("portfolio").upload(path, file, {
       upsert: true,
       contentType: file.type,
       cacheControl: "3600",
     });
-
     if (upErr) {
       console.error(upErr);
-      notify("Avatar upload failed");
-      return;
+      return notify("Avatar upload failed");
     }
 
     const { error } = await supabase
@@ -297,43 +273,44 @@ export default function PortfolioApp({ user }) {
 
     if (error) {
       console.error(error);
-      notify("Failed to save avatar");
-      return;
+      return notify("Failed to save avatar");
     }
 
     await loadProfile(user.id);
     notify("Avatar updated");
   }
 
-  /* =========================================================
-     GLOBAL LOGO (UPLOAD FROM PROFILE; SHOW ON LOGIN)
-     ========================================================= */
-
-  async function uploadGlobalLogo(file) {
-    if (!file) return;
-
-    const { error: upErr } = await supabase.storage
-      .from("portfolio")
-      .upload(GLOBAL_LOGO_OBJECT_PATH, file, {
-        upsert: true,
-        contentType: file.type,
-        cacheControl: "3600",
-      });
-
-    if (upErr) {
-      console.error(upErr);
-      notify("Logo upload failed (check storage policy)");
-      return;
-    }
-
-    await loadGlobalLogo();
-    notify("Logo updated");
+  function isProfileComplete(p) {
+    const nameOk = (p?.name ?? "").trim().length >= 2;
+    const sectionOk = (p?.section ?? "").trim().length >= 2;
+    const schoolOk = (p?.school ?? "").trim().length >= 2;
+    return nameOk && sectionOk && schoolOk;
   }
 
-  /* =========================================================
-     SUBJECTS
-     ========================================================= */
+  // ✅ init when user id available
+  useEffect(() => {
+    if (!user?.id) return;
 
+    (async () => {
+      await ensureProfile(user);
+      const p = await loadProfile(user.id);
+
+      // ✅ guide first-time users to setup profile first
+      if (p && !isProfileComplete(p)) {
+        setScreen("setupProfile");
+        return;
+      }
+
+      // otherwise normal flow
+      setScreen((prev) => (prev === "auth" || prev === "setupProfile" ? "home" : prev));
+      await loadSubjects();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // =========================
+  // SUBJECTS
+  // =========================
   async function loadSubjects() {
     if (!user?.id) return;
 
@@ -345,96 +322,91 @@ export default function PortfolioApp({ user }) {
       .order("sort", { ascending: true });
 
     setLoadingSubjects(false);
-
     if (error) {
       console.error(error);
-      notify("Failed to load subjects");
-      return;
+      return notify("Failed to load subjects");
     }
 
-    // ✅ New accounts start EMPTY (no seeding)
+    // ✅ New account: empty subjects (NO premade)
     setSubjects(data ?? []);
   }
 
-  async function addSubject(title, icon) {
+  async function addSubject() {
     if (!user?.id) return;
 
-    const t = String(title || "").trim();
-    if (!t) return notify("Enter subject name");
+    const title = newSubTitle.trim();
+    if (!title) return notify("Enter subject name");
 
     const nextSort = subjects.length ? Math.max(...subjects.map((s) => s.sort || 0)) + 1 : 1;
 
     const { error } = await supabase.from("subjects").insert({
       user_id: user.id,
-      title: t,
-      icon: icon || "📘",
+      title,
+      icon: newSubIcon,
       sort: nextSort,
     });
 
     if (error) {
       console.error(error);
-      notify("Failed to add subject");
-      return;
+      return notify("Failed to add subject");
     }
 
+    setShowAddSubject(false);
+    setNewSubTitle("");
+    setNewSubIcon("📘");
     await loadSubjects();
     notify("Subject added");
   }
 
   async function deleteSubject(subjectId) {
     if (!user?.id) return;
-    if (!confirm("Delete this subject and its files?")) return;
+    if (!confirm("Delete this subject?")) return;
 
-    // delete file rows first
+    // delete files rows first (storage objects: optional cleanup)
     await supabase.from("files").delete().eq("user_id", user.id).eq("subject_id", subjectId);
 
-    const { error } = await supabase
-      .from("subjects")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("id", subjectId);
-
+    const { error } = await supabase.from("subjects").delete().eq("user_id", user.id).eq("id", subjectId);
     if (error) {
       console.error(error);
-      notify("Failed to delete subject");
-      return;
+      return notify("Failed to delete subject");
     }
 
     if (selectedSubject?.id === subjectId) {
       setSelectedSubject(null);
       setScreen("subjects");
     }
-
     await loadSubjects();
     notify("Deleted");
   }
 
   async function deleteAllSubjects() {
     if (!user?.id) return;
-    if (!confirm("Delete ALL subjects and ALL files?")) return;
 
-    // delete file rows (and optionally storage objects later)
+    setBusy(true);
+
+    // 1) delete files rows
     await supabase.from("files").delete().eq("user_id", user.id);
+
+    // 2) delete subjects
     const { error } = await supabase.from("subjects").delete().eq("user_id", user.id);
+
+    setBusy(false);
 
     if (error) {
       console.error(error);
-      notify("Failed to delete all subjects");
-      return;
+      return notify("Delete all failed");
     }
 
-    setSelectedSubject(null);
-    setCategory(null);
-    setFiles([]);
     setSubjects([]);
+    setSelectedSubject(null);
     setScreen("subjects");
+    setShowDeleteAll(false);
     notify("All subjects deleted");
   }
 
-  /* =========================================================
-     FILES
-     ========================================================= */
-
+  // =========================
+  // FILES (preview/rename/delete smooth)
+  // =========================
   async function loadFiles(subjectId, cat) {
     if (!user?.id) return;
 
@@ -448,13 +420,10 @@ export default function PortfolioApp({ user }) {
       .order("created_at", { ascending: false });
 
     setLoadingFiles(false);
-
     if (error) {
       console.error(error);
-      notify("Failed to load files");
-      return;
+      return notify("Failed to load files");
     }
-
     setFiles(data ?? []);
   }
 
@@ -465,37 +434,38 @@ export default function PortfolioApp({ user }) {
     loadFiles(selectedSubject.id, cat);
   }
 
-  async function uploadSelectedFile(file) {
-    if (!file || !user?.id || !selectedSubject || !category) return;
+  function triggerUpload() {
+    setShowUploadChooser(true);
+  }
 
-    const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+  async function uploadSelectedFile(file) {
+    const f = file;
+    if (!f || !user?.id || !selectedSubject || !category) return;
+
+    const safeName = f.name.replace(/[^\w.\-]+/g, "_");
     const objectPath = `${user.id}/subjects/${selectedSubject.id}/${category}/${uid()}-${safeName}`;
 
-    const { error: upErr } = await supabase.storage.from("portfolio").upload(objectPath, file, {
-      contentType: file.type,
+    const { error: upErr } = await supabase.storage.from("portfolio").upload(objectPath, f, {
+      contentType: f.type,
       cacheControl: "3600",
     });
-
     if (upErr) {
       console.error(upErr);
-      notify("Upload failed");
-      return;
+      return notify("Upload failed");
     }
 
     const { error: insErr } = await supabase.from("files").insert({
       user_id: user.id,
       subject_id: selectedSubject.id,
       category,
-      title: file.name,
+      title: f.name,
       object_path: objectPath,
-      mime_type: file.type,
-      size: file.size,
+      mime_type: f.type,
+      size: f.size,
     });
-
     if (insErr) {
       console.error(insErr);
-      notify("Upload saved but DB insert failed");
-      return;
+      return notify("Upload saved but DB insert failed");
     }
 
     notify("Uploaded");
@@ -505,6 +475,7 @@ export default function PortfolioApp({ user }) {
   async function handleUploadAny(e) {
     const f = e.target.files?.[0];
     e.target.value = "";
+    setShowUploadChooser(false);
     if (!f) return;
     await uploadSelectedFile(f);
   }
@@ -512,32 +483,49 @@ export default function PortfolioApp({ user }) {
   async function handleUploadCamera(e) {
     const f = e.target.files?.[0];
     e.target.value = "";
+    setShowUploadChooser(false);
     if (!f) return;
     await uploadSelectedFile(f);
   }
 
   async function openPreview(fileRow) {
-    const { data, error } = await supabase.storage
-      .from("portfolio")
-      .createSignedUrl(fileRow.object_path, 60 * 10);
+    if (!fileRow?.object_path) return;
+
+    setPreviewBusy(true);
+    const { data, error } = await supabase.storage.from("portfolio").createSignedUrl(fileRow.object_path, 60 * 10);
+    setPreviewBusy(false);
 
     if (error) {
       console.error(error);
-      notify("Preview failed");
-      return;
+      return notify("Preview failed");
     }
 
     setPreview({
       url: data?.signedUrl,
       title: fileRow.title,
       mime: fileRow.mime_type || "",
+      isImg: isImage(fileRow.mime_type || ""),
     });
+  }
+
+  function closePreview() {
+    setPreview(null);
+  }
+
+  function openOptions(fileRow) {
+    setOptionsFor(fileRow);
+    setRenameTitle(fileRow?.title || "");
+  }
+
+  function closeOptions() {
+    setOptionsFor(null);
+    setShowRename(false);
+    setRenameTitle("");
   }
 
   async function renameFile() {
     if (!user?.id || !optionsFor) return;
-
-    const newName = String(renameTitle || "").trim();
+    const newName = renameTitle.trim();
     if (!newName) return notify("Enter new name");
 
     const { error } = await supabase
@@ -548,13 +536,11 @@ export default function PortfolioApp({ user }) {
 
     if (error) {
       console.error(error);
-      notify("Rename failed");
-      return;
+      return notify("Rename failed");
     }
 
-    setOptionsFor(null);
-    setRenameTitle("");
     notify("Renamed");
+    closeOptions();
     await loadFiles(selectedSubject.id, category);
   }
 
@@ -562,62 +548,38 @@ export default function PortfolioApp({ user }) {
     if (!user?.id || !optionsFor) return;
     if (!confirm("Delete this file?")) return;
 
-    const { error: stErr } = await supabase.storage
-      .from("portfolio")
-      .remove([optionsFor.object_path]);
-
+    const { error: stErr } = await supabase.storage.from("portfolio").remove([optionsFor.object_path]);
     if (stErr) {
       console.error(stErr);
-      notify("Storage delete failed");
-      return;
+      return notify("Storage delete failed");
     }
 
-    const { error } = await supabase
-      .from("files")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("id", optionsFor.id);
-
+    const { error } = await supabase.from("files").delete().eq("user_id", user.id).eq("id", optionsFor.id);
     if (error) {
       console.error(error);
-      notify("DB delete failed");
-      return;
+      return notify("DB delete failed");
     }
 
-    setOptionsFor(null);
     notify("Deleted");
+    closeOptions();
     await loadFiles(selectedSubject.id, category);
   }
 
-  /* =========================================================
-     INIT WHEN USER READY
-     ========================================================= */
-  useEffect(() => {
-    if (!user?.id) return;
-    (async () => {
-      await ensureProfile(user);
-      await loadProfile(user.id);
-      await loadSubjects();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
-  /* =========================================================
-     NAV BACK
-     ========================================================= */
+  // Back navigation
   function back() {
-    if (screen === "profile" || screen === "profile_setup") setScreen("home");
+    if (screen === "profile") setScreen("home");
+    else if (screen === "setupProfile") setScreen("auth");
     else if (screen === "subjects") setScreen("home");
     else if (screen === "folders") setScreen("subjects");
     else if (screen === "files") setScreen("folders");
     else setScreen("home");
   }
 
-  /* =========================================================
-     AUTH UI (Login only + Forgot link below)
-     NOTE: Logo shown here is GLOBAL (logoUrl)
-     ========================================================= */
+  // =========================
+  // RENDER: AUTH / SETUP / MAIN
+  // =========================
 
+  // ✅ AUTH PAGE (NO LOGO FEATURE)
   if (screen === "auth") {
     return (
       <div className="app-shell">
@@ -627,77 +589,91 @@ export default function PortfolioApp({ user }) {
         </div>
 
         <div className="white-surface">
-          <div className="auth-card">
-            {/* GLOBAL LOGO FRAME */}
-            <div className="logo-frame" title="App logo">
-              {logoUrl ? (
-                <img src={logoUrl} alt="logo" />
-              ) : (
-                <div className="logo-ph">LOGO</div>
-              )}
-            </div>
+          {/* Tabs (Login / Sign Up) + Forgot link below */}
+          <div className="auth-tabs">
+            <button
+              className={"tab " + (authTab === "login" ? "active" : "")}
+              onClick={() => setAuthTab("login")}
+              disabled={busy}
+            >
+              Login
+            </button>
+            <button
+              className={"tab " + (authTab === "signup" ? "active" : "")}
+              onClick={() => setAuthTab("signup")}
+              disabled={busy}
+            >
+              Create
+            </button>
+          </div>
 
-            <div className="auth-banner">
-              Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
-            </div>
+          <div className="auth-banner">
+            Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
+          </div>
 
-            <div className="subtle" style={{ marginTop: 10 }}>
-              Login to sync your portfolio across devices.
-            </div>
+          <div className="subtle" style={{ marginTop: 10 }}>
+            {authTab === "signup" ? "Create an account to start your portfolio." : "Login to sync your portfolio across devices."}
+          </div>
 
-            <div className="field" style={{ marginTop: 12 }}>
-              <label>EMAIL</label>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
-            </div>
+          <div className="field" style={{ marginTop: 12 }}>
+            <label>EMAIL</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
+          </div>
 
+          <div className="field">
+            <label>PASSWORD</label>
+            <div className="pw-wrap">
+              <input
+                type={showPw ? "text" : "password"}
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                placeholder="••••••••"
+              />
+              <button className="eye" onClick={() => setShowPw((v) => !v)} type="button" aria-label="toggle password">
+                {showPw ? "🙈" : "👁️"}
+              </button>
+            </div>
+          </div>
+
+          {authTab === "signup" && (
             <div className="field">
-              <label>PASSWORD</label>
+              <label>CONFIRM PASSWORD</label>
               <div className="pw-wrap">
                 <input
-                  type={showPass ? "text" : "password"}
-                  value={pass}
-                  onChange={(e) => setPass(e.target.value)}
+                  type={showPw2 ? "text" : "password"}
+                  value={pass2}
+                  onChange={(e) => setPass2(e.target.value)}
                   placeholder="••••••••"
                 />
-                <button className="eye" onClick={() => setShowPass((v) => !v)} type="button" title="Show/Hide">
-                  {showPass ? "🙈" : "👁️"}
+                <button className="eye" onClick={() => setShowPw2((v) => !v)} type="button" aria-label="toggle password 2">
+                  {showPw2 ? "🙈" : "👁️"}
                 </button>
               </div>
             </div>
+          )}
 
-            <div className="modal-actions">
-              <button className="small-btn primary" onClick={signIn}>
-                Login
+          <div className="modal-actions">
+            {authTab === "login" ? (
+              <button className="small-btn primary" onClick={signIn} disabled={busy}>
+                {busy ? "Please wait…" : "Login"}
               </button>
-              <button
-                className="small-btn"
-                onClick={() => {
-                  // signup quick prompt (confirm password appears by browser prompt)
-                  const p2 = prompt("Confirm password:");
-                  if (p2 == null) return;
-                  setPass2(p2);
-                  setTimeout(() => signUp(), 0);
-                }}
-              >
-                Create Account
+            ) : (
+              <button className="small-btn primary" onClick={signUp} disabled={busy}>
+                {busy ? "Please wait…" : "Create Account"}
               </button>
-            </div>
+            )}
+          </div>
 
-            {/* Keep only this below (no extra tab) */}
-            <div style={{ marginTop: 12 }}>
-              <button
-                className="small-btn"
-                onClick={async () => {
-                  if (!email) return notify("Enter your email first");
-                  const redirectTo = window.location.origin + window.location.pathname; // same tab/site
-                  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-                  if (error) notify(error.message);
-                  else notify("Password reset email sent");
-                }}
-              >
-                Forgot password?
-              </button>
-            </div>
+          {/* Forgot password BELOW only (no extra tab) */}
+          <div style={{ marginTop: 12 }}>
+            <button
+              className="small-btn"
+              onClick={sendReset}
+              disabled={busy}
+              style={{ width: "100%", justifyContent: "center" }}
+            >
+              {busy ? "Please wait…" : "Forgot Password"}
+            </button>
           </div>
         </div>
 
@@ -706,12 +682,105 @@ export default function PortfolioApp({ user }) {
     );
   }
 
-  /* =========================================================
-     MAIN UI
-     ========================================================= */
+  // ✅ SETUP PROFILE SCREEN (first login / incomplete profile)
+  if (screen === "setupProfile") {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="topbar-left">
+            <button className="back-btn" onClick={back} title="Back">
+              ←
+            </button>
+            <div className="brand">SETUP PROFILE</div>
+          </div>
+          <div />
+        </div>
 
+        <div className="white-surface">
+          <div style={{ fontWeight: 900, fontSize: 18 }}>Set up your profile</div>
+          <div className="subtle" style={{ marginTop: 6 }}>
+            Fill this once. After saving, you will go straight to the dashboard.
+          </div>
+
+          <div className="profile-card">
+            <div
+              className="avatar"
+              onClick={() => document.getElementById("avatarInputSetup").click()}
+              style={{ cursor: "pointer" }}
+              title="Change photo"
+            >
+              {avatarSrc ? <img src={avatarSrc} alt="avatar" /> : <div style={{ fontSize: 28 }}>👤</div>}
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>Profile Photo</div>
+              <div className="subtle" style={{ margin: 0 }}>
+                Tap to upload (optional)
+              </div>
+            </div>
+          </div>
+
+          <input
+            id="avatarInputSetup"
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) uploadAvatar(f);
+            }}
+          />
+
+          <div className="field">
+            <label>FULL NAME</label>
+            <input value={profile.name || ""} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
+          </div>
+
+          <div className="field">
+            <label>SECTION</label>
+            <input value={profile.section || ""} onChange={(e) => setProfile({ ...profile, section: e.target.value })} />
+          </div>
+
+          <div className="field">
+            <label>SCHOOL</label>
+            <input value={profile.school || ""} onChange={(e) => setProfile({ ...profile, school: e.target.value })} />
+          </div>
+
+          <div className="modal-actions">
+            <button
+              className="small-btn primary"
+              onClick={async () => {
+                await saveProfile(profile);
+                // ✅ go to dashboard immediately (no sign-in again)
+                setScreen("home");
+                await loadSubjects();
+              }}
+            >
+              Save & Continue
+            </button>
+            <button className="small-btn" onClick={signOut}>
+              Logout
+            </button>
+          </div>
+        </div>
+
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
+
+  // --------- PART 1 ENDS HERE ----------
+  // Part 2 will include:
+  // - main topbar + home/profile/subjects/folders/files UI
+  // - Add Subject modal UI (improved, not just alert)
+  // - preview modal (tap outside to close)
+  // - file options modal (3 dots -> rename/delete)
+  // - bottom navigation and FAB behavior fixes
+  // ========= MAIN UI =========
   return (
     <div className="app-shell">
+      {/* TOP BAR */}
       <div className="topbar">
         <div className="topbar-left">
           {screen !== "home" ? (
@@ -730,7 +799,7 @@ export default function PortfolioApp({ user }) {
       {/* HOME */}
       {screen === "home" && (
         <div className="white-surface">
-          <div className="hero">Hi, {profile?.name?.trim() ? profile.name : "STUDENT"}</div>
+          <div className="hero">Hi, {(profile?.name || "STUDENT").toUpperCase()}</div>
           <div className="subtle">Your digital portfolio — organized and synced.</div>
 
           <div className="big-tile" onClick={() => setScreen("subjects")} role="button">
@@ -749,76 +818,13 @@ export default function PortfolioApp({ user }) {
         </div>
       )}
 
-      {/* PROFILE SETUP (first time) */}
-      {screen === "profile_setup" && (
-        <div className="white-surface">
-          <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>Set up your profile</div>
-          <div className="subtle" style={{ marginTop: 0 }}>
-            Please complete this once. After saving, you’ll go to your dashboard.
-          </div>
-
-          {/* Avatar */}
-          <div className="profile-card">
-            <div
-              className="avatar"
-              onClick={() => document.getElementById("avatarInput").click()}
-              style={{ cursor: "pointer" }}
-              title="Change photo"
-            >
-              {avatarSrc ? <img src={avatarSrc} alt="avatar" /> : <div style={{ fontSize: 28 }}>👤</div>}
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>Your Photo</div>
-              <div className="subtle" style={{ margin: 0 }}>
-                Tap to upload
-              </div>
-            </div>
-          </div>
-
-          <input
-            id="avatarInput"
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) uploadAvatar(f);
-            }}
-          />
-
-          {/* Fields */}
-          <div className="field">
-            <label>FULL NAME</label>
-            <input value={profile.name || ""} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
-          </div>
-
-          <div className="field">
-            <label>SECTION</label>
-            <input value={profile.section || ""} onChange={(e) => setProfile({ ...profile, section: e.target.value })} />
-          </div>
-
-          <div className="field">
-            <label>SCHOOL</label>
-            <input value={profile.school || ""} onChange={(e) => setProfile({ ...profile, school: e.target.value })} />
-          </div>
-
-          <div className="modal-actions">
-            <button className="small-btn primary" onClick={() => saveProfile(profile)}>
-              Save & Continue
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* PROFILE */}
       {screen === "profile" && (
         <div className="white-surface">
           <div className="profile-card">
             <div
               className="avatar"
-              onClick={() => document.getElementById("avatarInput2").click()}
+              onClick={() => document.getElementById("avatarInput").click()}
               style={{ cursor: "pointer" }}
               title="Change photo"
             >
@@ -834,7 +840,7 @@ export default function PortfolioApp({ user }) {
           </div>
 
           <input
-            id="avatarInput2"
+            id="avatarInput"
             type="file"
             accept="image/*"
             style={{ display: "none" }}
@@ -872,33 +878,6 @@ export default function PortfolioApp({ user }) {
             />
           </div>
 
-          {/* GLOBAL APP LOGO (upload from profile; shows on login for everyone) */}
-          <div style={{ marginTop: 14, fontWeight: 900 }}>App Logo (Global)</div>
-          <div className="subtle" style={{ marginTop: 2 }}>
-            Upload once — this logo appears on the Login screen for everyone.
-          </div>
-
-          <div
-            className="logo-frame"
-            onClick={() => document.getElementById("globalLogoInput").click()}
-            title="Tap to upload global logo"
-          >
-            {logoUrl ? <img src={logoUrl} alt="global logo" /> : <div className="logo-ph">LOGO</div>}
-          </div>
-
-          <input
-            id="globalLogoInput"
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (!f) return;
-              await uploadGlobalLogo(f);
-            }}
-          />
-
           <div className="modal-actions">
             <button className="small-btn primary" onClick={() => saveProfile(profile)}>
               Save
@@ -913,37 +892,31 @@ export default function PortfolioApp({ user }) {
       {/* SUBJECTS */}
       {screen === "subjects" && (
         <div className="white-surface">
-          <div className="subtle">
-            Add subjects, choose icons, and delete individually — or delete all.
+          <div className="subtle" style={{ marginBottom: 10 }}>
+            Tap a subject to open. Add or delete subjects anytime.
           </div>
 
-          <div className="modal-actions" style={{ marginTop: 8 }}>
-            <button
-              className="small-btn primary"
-              onClick={async () => {
-                const title = prompt("Subject name:");
-                if (title == null) return;
-                const icon = prompt("Icon (example: 📘). Leave blank for default:") || "📘";
-                await addSubject(title, ICONS.includes(icon) ? icon : icon);
-              }}
-            >
+          {/* Top actions */}
+          <div className="actions-row">
+            <button className="small-btn primary" onClick={() => setShowAddSubject(true)}>
               + Add Subject
             </button>
-
-            <button className="small-btn danger" onClick={deleteAllSubjects}>
-              Delete All Subjects
+            <button className="small-btn danger" onClick={() => setShowDeleteAll(true)} disabled={busy || subjects.length === 0}>
+              Delete All
             </button>
           </div>
 
           {loadingSubjects ? (
-            <div className="subtle" style={{ marginTop: 10 }}>
+            <div className="subtle" style={{ marginTop: 12 }}>
               Loading…
             </div>
           ) : subjects.length === 0 ? (
-            <div className="subtle" style={{ textAlign: "center", padding: "28px 10px" }}>
-              <div style={{ fontSize: 44 }}>📚</div>
+            <div className="empty">
+              <div style={{ fontSize: 46 }}>📚</div>
               <div style={{ fontWeight: 900, color: "#0f172a" }}>No subjects yet</div>
-              <div>Tap “Add Subject” to create your first one.</div>
+              <div className="subtle" style={{ marginTop: 6 }}>
+                Click “Add Subject” to create your first one.
+              </div>
             </div>
           ) : (
             <div className="grid" style={{ marginTop: 12 }}>
@@ -1001,16 +974,18 @@ export default function PortfolioApp({ user }) {
             {selectedSubject ? selectedSubject.title : "Subject"} •{" "}
             {category === "performance" ? "Performance Tasks" : "Written Works"}
           </div>
-          <div className="subtle">Tap a file to preview. Use ⋯ to rename/delete.</div>
+          <div className="subtle">Tap a file to preview. Use ⋯ for rename/delete.</div>
 
           <div className="file-list">
             {loadingFiles ? (
               <div className="subtle">Loading…</div>
             ) : files.length === 0 ? (
-              <div className="subtle" style={{ textAlign: "center", padding: "40px 10px" }}>
+              <div className="empty" style={{ padding: "34px 8px" }}>
                 <div style={{ fontSize: 44 }}>📄</div>
                 <div style={{ fontWeight: 900, color: "#0f172a" }}>No files yet</div>
-                <div>Tap + to upload your work.</div>
+                <div className="subtle" style={{ marginTop: 6 }}>
+                  Click + to upload your work.
+                </div>
               </div>
             ) : (
               files.map((f) => (
@@ -1019,18 +994,10 @@ export default function PortfolioApp({ user }) {
                     className="file-thumb"
                     onClick={() => openPreview(f)}
                     style={{ cursor: "pointer" }}
-                    title="Preview"
+                    title="Open preview"
                   >
                     {isImage(f.mime_type || "") ? (
-                      <img
-                        src={
-                          // fast thumbnail: signed url per click is costly; show icon here
-                          // (preview will fetch signed url)
-                          "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-                        }
-                        alt=""
-                        style={{ width: 1, height: 1 }}
-                      />
+                      <div style={{ fontSize: 22 }}>🖼️</div>
                     ) : (
                       <div style={{ fontSize: 22 }}>📄</div>
                     )}
@@ -1039,16 +1006,14 @@ export default function PortfolioApp({ user }) {
                   <div className="file-meta" onClick={() => openPreview(f)} style={{ cursor: "pointer" }}>
                     <div className="file-title">{f.title}</div>
                     <div className="file-sub">
-                      {fmtBytes(f.size)} • {(f.mime_type || "file").toLowerCase()}
+                      {f.mime_type || "file"} {f.size ? `• ${fmtBytes(f.size)}` : ""}
                     </div>
                   </div>
 
+                  {/* 3-dots options */}
                   <button
-                    className="kebab"
-                    onClick={() => {
-                      setOptionsFor(f);
-                      setRenameTitle(f.title || "");
-                    }}
+                    className="kebab kebab-dark"
+                    onClick={() => openOptions(f)}
                     title="Options"
                     type="button"
                   >
@@ -1059,116 +1024,188 @@ export default function PortfolioApp({ user }) {
             )}
           </div>
 
-          {/* Upload buttons */}
-          <button className="fab" onClick={() => fileRef.current?.click()} title="Upload">
+          {/* FAB upload */}
+          <button className="fab" onClick={triggerUpload} title="Upload">
             +
           </button>
-
-          <input ref={fileRef} type="file" onChange={handleUploadAny} style={{ display: "none" }} />
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleUploadCamera}
-            style={{ display: "none" }}
-          />
         </div>
       )}
 
-      {/* PREVIEW MODAL (tap outside to close) */}
-      {preview && (
-        <div
-          className="modal-bg"
-          onClick={() => setPreview(null)}
-          role="button"
-          aria-label="Close preview"
-        >
-          <div className="modal white-surface" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {preview.title}
+      {/* BOTTOM NAV */}
+      <div className="bottom-nav">
+        <button className={"nav-btn " + (screen === "home" ? "active" : "")} onClick={() => setScreen("home")}>
+          🏠 <span>Home</span>
+        </button>
+        <button className={"nav-btn " + (screen === "subjects" ? "active" : "")} onClick={() => setScreen("subjects")}>
+          📚 <span>Subjects</span>
+        </button>
+        <button className={"nav-btn " + (screen === "profile" ? "active" : "")} onClick={() => setScreen("profile")}>
+          👤 <span>Profile</span>
+        </button>
+      </div>
+
+      {/* Upload chooser modal (mobile) */}
+      {showUploadChooser && (
+        <div className="modal-bg" onClick={() => setShowUploadChooser(false)}>
+          <div className="white-surface modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Upload</div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Choose file or take a photo.
+            </div>
+
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={() => fileRef.current?.click()}>
+                📁 Choose File
+              </button>
+              <button className="small-btn" onClick={() => cameraRef.current?.click()}>
+                📷 Camera
+              </button>
+              <button className="small-btn" onClick={() => setShowUploadChooser(false)}>
+                Cancel
+              </button>
+            </div>
+
+            <input ref={fileRef} type="file" hidden onChange={handleUploadAny} />
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={handleUploadCamera} />
+          </div>
+        </div>
+      )}
+
+      {/* Add Subject modal (improved UI, not just toast) */}
+      {showAddSubject && (
+        <div className="modal-bg" onClick={() => setShowAddSubject(false)}>
+          <div className="white-surface modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Add Subject</div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Choose an icon and name your subject.
+            </div>
+
+            <div className="field">
+              <label>SUBJECT NAME</label>
+              <input value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} placeholder="e.g. Mathematics" />
+            </div>
+
+            <div className="field" style={{ marginTop: 10 }}>
+              <label>ICON</label>
+              <div className="icon-grid">
+                {ICONS.map((ic) => (
+                  <button
+                    key={ic}
+                    type="button"
+                    className={"icon-pick " + (newSubIcon === ic ? "active" : "")}
+                    onClick={() => setNewSubIcon(ic)}
+                  >
+                    {ic}
+                  </button>
+                ))}
               </div>
-              <button className="small-btn" onClick={() => setPreview(null)} type="button">
+            </div>
+
+            <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
+              <button className="small-btn" onClick={() => setShowAddSubject(false)}>
+                Cancel
+              </button>
+              <button className="small-btn primary" onClick={addSubject}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete all confirm modal */}
+      {showDeleteAll && (
+        <div className="modal-bg" onClick={() => setShowDeleteAll(false)}>
+          <div className="white-surface modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 18, color: "#0f172a" }}>Delete all subjects?</div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              This will remove all subjects and their file records. (Storage files may remain unless you clean them later.)
+            </div>
+
+            <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
+              <button className="small-btn" onClick={() => setShowDeleteAll(false)}>
+                Cancel
+              </button>
+              <button className="small-btn danger" onClick={deleteAllSubjects} disabled={busy}>
+                {busy ? "Deleting…" : "Delete All"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview modal (smooth, tap outside closes) */}
+      {(preview || previewBusy) && (
+        <div className="modal-bg" onClick={closePreview}>
+          <div className="white-surface modal preview-card" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-top">
+              <div style={{ fontWeight: 900, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {previewBusy ? "Loading preview…" : (preview?.title || "Preview")}
+              </div>
+              <button className="small-btn" onClick={closePreview} type="button">
                 Close
               </button>
             </div>
 
-            <div style={{ marginTop: 12 }}>
-              {isImage(preview.mime) ? (
-                <img
-                  src={preview.url}
-                  alt={preview.title}
-                  style={{
-                    width: "100%",
-                    maxHeight: "70vh",
-                    objectFit: "contain",
-                    borderRadius: 18,
-                    border: "1px solid rgba(0,0,0,0.06)",
-                  }}
-                />
+            <div className="preview-body">
+              {previewBusy ? (
+                <div className="subtle">Please wait…</div>
+              ) : preview?.isImg ? (
+                <img className="preview-img preview-fit" src={preview.url} alt="preview" />
               ) : (
-                <iframe
-                  src={preview.url}
-                  title={preview.title}
-                  style={{
-                    width: "100%",
-                    height: "70vh",
-                    borderRadius: 18,
-                    border: "1px solid rgba(0,0,0,0.06)",
-                    background: "#fff",
-                  }}
-                />
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div className="subtle">This file is not an image.</div>
+                  <a className="small-btn primary" href={preview?.url} target="_blank" rel="noreferrer">
+                    Open / Download
+                  </a>
+                </div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* OPTIONS MODAL (rename/delete) */}
+      {/* File options modal (⋯ -> rename/delete) */}
       {optionsFor && (
-        <div className="modal-bg" onClick={() => setOptionsFor(null)} role="button" aria-label="Close options">
-          <div className="modal white-surface" onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontWeight: 900, marginBottom: 6 }}>File Options</div>
-            <div className="subtle" style={{ marginTop: 0 }}>
-              Rename or delete this file.
+        <div className="modal-bg" onClick={closeOptions}>
+          <div className="white-surface modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>File Options</div>
+            <div className="subtle" style={{ marginTop: 6, wordBreak: "break-word" }}>
+              {optionsFor.title}
             </div>
 
-            <div className="field">
-              <label>RENAME</label>
-              <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
-            </div>
+            {!showRename ? (
+              <div className="modal-actions">
+                <button className="small-btn primary" onClick={() => setShowRename(true)}>
+                  Rename
+                </button>
+                <button className="small-btn danger" onClick={deleteFile}>
+                  Delete
+                </button>
+                <button className="small-btn" onClick={closeOptions}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="field" style={{ marginTop: 10 }}>
+                  <label>NEW NAME</label>
+                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
+                </div>
 
-            <div className="modal-actions" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-              <button className="small-btn primary" onClick={renameFile}>
-                Save
-              </button>
-              <button className="small-btn danger" onClick={deleteFile}>
-                Delete
-              </button>
-              <button className="small-btn" onClick={() => setOptionsFor(null)}>
-                Cancel
-              </button>
-            </div>
+                <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
+                  <button className="small-btn" onClick={() => setShowRename(false)}>
+                    Back
+                  </button>
+                  <button className="small-btn primary" onClick={renameFile}>
+                    Save
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
-
-      {/* Bottom navigation */}
-      <div className="bottom-nav">
-        <button className={"nav-btn " + (screen === "home" ? "active" : "")} onClick={() => setScreen("home")}>
-          🏠 <span>Home</span>
-        </button>
-        <button className={"nav-btn " + (screen === "subjects" ? "active" : "")} onClick={() => setScreen("subjects")}>
-          📘 <span>Subjects</span>
-        </button>
-        <button className={"nav-btn " + (screen === "profile" ? "active" : "")} onClick={() => setScreen("profile")}>
-          👤 <span>Profile</span>
-        </button>
-        <button className="nav-btn" onClick={signOut}>
-          🚪 <span>Logout</span>
-        </button>
-      </div>
 
       {toast && <div className="toast">{toast}</div>}
     </div>

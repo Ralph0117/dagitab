@@ -404,3 +404,138 @@ body{
 .white-surface{
   padding-bottom: 84px; /* makes space so content isn't hidden behind nav */
 }
+/* ===== Password eye toggle ===== */
+.pw-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.pw-wrap input {
+  padding-right: 44px;
+}
+.eye {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+/* ===== Auth Tabs ===== */
+.auth-tabs {
+  display: flex;
+  margin-bottom: 12px;
+  background: #e8edff;
+  border-radius: 12px;
+  padding: 4px;
+}
+.tab {
+  flex: 1;
+  border: none;
+  padding: 10px;
+  font-weight: 700;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.tab.active {
+  background: #1e49d6;
+  color: white;
+}
+
+/* ===== Logo frame ===== */
+.logo-frame {
+  width: 120px;
+  height: 120px;
+  border-radius: 16px;
+  border: 3px solid #1e49d6;
+  margin: 8px auto 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30,73,214,0.06);
+  overflow: hidden;
+  cursor: pointer;
+}
+.logo-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.logo-ph {
+  font-weight: 900;
+  color: #1e49d6;
+}
+
+/* ===== Floating upload button ===== */
+.fab {
+  position: fixed;
+  right: 18px;
+  bottom: 80px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #1e49d6;
+  color: white;
+  font-size: 30px;
+  border: none;
+  cursor: pointer;
+}
+
+/* ===== Bottom navigation ===== */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: white;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  z-index: 50;
+}
+.bn {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 16px;
+  color: #475569;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.bn span {
+  font-size: 11px;
+}
+.bn.active {
+  color: #1e49d6;
+  font-weight: 800;
+}
+
+/* ===== Delete all danger ===== */
+.small-btn.danger {
+  background: #dc2626;
+  color: white;
+}
+
+/* ===== Preview ===== */
+.preview-card {
+  background: white;
+  max-width: 500px;
+  width: 92%;
+  border-radius: 16px;
+  padding: 12px;
+}
+.preview-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+}
+.preview-body {
+  margin-top: 10px;
+}

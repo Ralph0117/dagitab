@@ -568,50 +568,68 @@ body{
   text-decoration: underline;
   padding: 6px 0;
 }
-/* ===== PILL NAV (Home / Subjects / Profile) ===== */
+/* ===== PILL NAV (COMPACT - no overlap) ===== */
 .pill-nav{
-  background: transparent !important;
-  border-top: none !important;
-  height: auto !important;
-  padding: 12px 14px calc(12px + env(safe-area-inset-bottom)) !important;
-  gap: 12px;
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+
+  height: 64px;                 /* ✅ same as old nav */
+  padding: 8px 10px;            /* ✅ compact */
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-around;
+
+  background: rgba(255,255,255,0.92);   /* subtle base (like old) */
+  border-top: 1px solid rgba(15,23,42,0.12);
+  z-index: 55;
+  backdrop-filter: blur(6px);
 }
 
+/* buttons inside */
 .pill-btn{
   flex: 1;
+  height: 46px;                 /* ✅ small pill height */
+  min-width: 0;
+
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
 
-  background: rgba(255,255,255,0.95);
+  background: #fff;
   border: 1px solid rgba(15,23,42,0.10);
   border-radius: 999px;
 
-  padding: 14px 16px;
+  padding: 0 12px;              /* ✅ no tall padding */
   font-weight: 900;
-  font-size: 18px;
+  font-size: 14px;              /* ✅ smaller text */
   color: #0f172a;
 
-  box-shadow: 0 10px 22px rgba(0,0,0,0.12);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.12);
   cursor: pointer;
 }
 
-.pill-btn:active{
-  transform: scale(0.99);
-}
+.pill-btn:active{ transform: scale(0.99); }
 
 .pill-btn.active{
   border-color: rgba(30,73,214,0.45);
-  box-shadow: 0 12px 26px rgba(0,0,0,0.14);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.14);
 }
 
-.pill-ic{
-  font-size: 22px;
-  line-height: 1;
-}
-
+/* icon + text sizing */
+.pill-ic{ font-size: 18px; line-height: 1; }
 .pill-txt{
-  font-size: 20px;
+  font-size: 14px;
   line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ✅ ensure your page content never hides behind nav */
+.white-surface{
+  padding-bottom: 92px; /* you already have this - keep */
 }

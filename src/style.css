@@ -568,3 +568,50 @@ body{
   text-decoration: underline;
   padding: 6px 0;
 }
+/* ===== PILL NAV (Home / Subjects / Profile) ===== */
+.pill-nav{
+  background: transparent !important;
+  border-top: none !important;
+  height: auto !important;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom)) !important;
+  gap: 12px;
+}
+
+.pill-btn{
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+
+  background: rgba(255,255,255,0.95);
+  border: 1px solid rgba(15,23,42,0.10);
+  border-radius: 999px;
+
+  padding: 14px 16px;
+  font-weight: 900;
+  font-size: 18px;
+  color: #0f172a;
+
+  box-shadow: 0 10px 22px rgba(0,0,0,0.12);
+  cursor: pointer;
+}
+
+.pill-btn:active{
+  transform: scale(0.99);
+}
+
+.pill-btn.active{
+  border-color: rgba(30,73,214,0.45);
+  box-shadow: 0 12px 26px rgba(0,0,0,0.14);
+}
+
+.pill-ic{
+  font-size: 22px;
+  line-height: 1;
+}
+
+.pill-txt{
+  font-size: 20px;
+  line-height: 1;
+}

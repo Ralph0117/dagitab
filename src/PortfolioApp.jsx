@@ -767,16 +767,10 @@ export default function PortfolioApp({ user }) {
         <div className="white-surface">
           <div className="auth-card">
             <div className="auth-tabs">
-              <button
-                className={"tab " + (authTab === "login" ? "active" : "")}
-                onClick={() => setAuthTab("login")}
-              >
+              <button className={"tab " + (authTab === "login" ? "active" : "")} onClick={() => setAuthTab("login")}>
                 Login
               </button>
-              <button
-                className={"tab " + (authTab === "signup" ? "active" : "")}
-                onClick={() => setAuthTab("signup")}
-              >
+              <button className={"tab " + (authTab === "signup" ? "active" : "")} onClick={() => setAuthTab("signup")}>
                 Sign Up
               </button>
             </div>
@@ -803,12 +797,7 @@ export default function PortfolioApp({ user }) {
                   onChange={(e) => setPass(e.target.value)}
                   placeholder="••••••••"
                 />
-                <button
-                  className="eye"
-                  onClick={() => setShowPass((v) => !v)}
-                  type="button"
-                  aria-label="toggle password"
-                >
+                <button className="eye" onClick={() => setShowPass((v) => !v)} type="button" aria-label="toggle password">
                   {showPass ? "🙈" : "👁️"}
                 </button>
               </div>
@@ -824,12 +813,7 @@ export default function PortfolioApp({ user }) {
                     onChange={(e) => setPass2(e.target.value)}
                     placeholder="••••••••"
                   />
-                  <button
-                    className="eye"
-                    onClick={() => setShowPass2((v) => !v)}
-                    type="button"
-                    aria-label="toggle confirm"
-                  >
+                  <button className="eye" onClick={() => setShowPass2((v) => !v)} type="button" aria-label="toggle confirm">
                     {showPass2 ? "🙈" : "👁️"}
                   </button>
                 </div>
@@ -863,11 +847,7 @@ export default function PortfolioApp({ user }) {
               <div style={{ marginTop: 12 }}>
                 <div className="field">
                   <label>EMAIL FOR RESET</label>
-                  <input
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="Enter email"
-                  />
+                  <input value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} placeholder="Enter email" />
                 </div>
                 <div className="modal-actions">
                   <button className="small-btn primary" onClick={sendResetEmail} disabled={busy}>
@@ -1029,18 +1009,12 @@ export default function PortfolioApp({ user }) {
 
             <div className="field">
               <label>SECTION</label>
-              <input
-                value={profile.section || ""}
-                onChange={(e) => setProfile({ ...profile, section: e.target.value })}
-              />
+              <input value={profile.section || ""} onChange={(e) => setProfile({ ...profile, section: e.target.value })} />
             </div>
 
             <div className="field">
               <label>SCHOOL</label>
-              <input
-                value={profile.school || ""}
-                onChange={(e) => setProfile({ ...profile, school: e.target.value })}
-              />
+              <input value={profile.school || ""} onChange={(e) => setProfile({ ...profile, school: e.target.value })} />
             </div>
 
             <div className="modal-actions">
@@ -1300,14 +1274,33 @@ export default function PortfolioApp({ user }) {
         </div>
       )}
 
-      {/* ✅ UPDATED NAV ONLY */}
-      <div className="bottom-nav">
-        <button className={"bn " + (screen === "profile" ? "active" : "")} onClick={() => setScreen("profile")}>
-          👤 <span>My Profile</span>
+      {/* ✅ PILL NAV (DESIGN LIKE YOUR PHOTO) */}
+      <div className="bottom-nav pill-nav">
+        <button
+          className={"pill-btn " + (screen === "home" ? "active" : "")}
+          onClick={() => setScreen("home")}
+          type="button"
+        >
+          <span className="pill-ic">🏠</span>
+          <span className="pill-txt">Home</span>
         </button>
 
-        <button className="bn" onClick={signOut}>
-          ⎋ <span>Logout</span>
+        <button
+          className={"pill-btn " + (screen === "subjects" ? "active" : "")}
+          onClick={() => setScreen("subjects")}
+          type="button"
+        >
+          <span className="pill-ic">📘</span>
+          <span className="pill-txt">Subjects</span>
+        </button>
+
+        <button
+          className={"pill-btn " + (screen === "profile" ? "active" : "")}
+          onClick={() => setScreen("profile")}
+          type="button"
+        >
+          <span className="pill-ic">👤</span>
+          <span className="pill-txt">My Profile</span>
         </button>
       </div>
 

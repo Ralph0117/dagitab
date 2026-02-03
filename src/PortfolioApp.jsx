@@ -755,6 +755,320 @@ export default function PortfolioApp({ user }) {
   }
 
   // ======= PART 2 STARTS BELOW (UI RETURNS) =======
+  // ========= AUTH PAGE (tabs + forgot below) =========
+  if (screen === "auth") {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="brand">DAGITAB</div>
+          <div />
+        </div>
+
+        <div className="white-surface">
+          <div className="auth-card">
+            <div className="auth-tabs">
+              <button
+                className={"tab " + (authTab === "login" ? "active" : "")}
+                onClick={() => setAuthTab("login")}
+              >
+                Login
+              </button>
+              <button
+                className={"tab " + (authTab === "signup" ? "active" : "")}
+                onClick={() => setAuthTab("signup")}
+              >
+                Sign Up
+              </button>
+            </div>
+
+            <div className="auth-banner">
+              Digital Application for Guiding and Improving Tasks, Academics, and Bibliographies for students
+            </div>
+
+            <div className="subtle" style={{ marginTop: 10 }}>
+              Login to sync your portfolio across devices.
+            </div>
+
+            <div className="field" style={{ marginTop: 12 }}>
+              <label>EMAIL</label>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email" />
+            </div>
+
+            <div className="field">
+              <label>PASSWORD</label>
+              <div className="pw-wrap">
+                <input
+                  type={showPass ? "text" : "password"}
+                  value={pass}
+                  onChange={(e) => setPass(e.target.value)}
+                  placeholder="••••••••"
+                />
+                <button
+                  className="eye"
+                  onClick={() => setShowPass((v) => !v)}
+                  type="button"
+                  aria-label="toggle password"
+                >
+                  {showPass ? "🙈" : "👁️"}
+                </button>
+              </div>
+            </div>
+
+            {authTab === "signup" && (
+              <div className="field">
+                <label>CONFIRM PASSWORD</label>
+                <div className="pw-wrap">
+                  <input
+                    type={showPass2 ? "text" : "password"}
+                    value={pass2}
+                    onChange={(e) => setPass2(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                  <button
+                    className="eye"
+                    onClick={() => setShowPass2((v) => !v)}
+                    type="button"
+                    aria-label="toggle confirm"
+                  >
+                    {showPass2 ? "🙈" : "👁️"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              {authTab === "login" ? (
+                <button className="small-btn primary" onClick={signIn} disabled={busy}>
+                  {busy ? "Please wait..." : "Login"}
+                </button>
+              ) : (
+                <button className="small-btn primary" onClick={signUp} disabled={busy}>
+                  {busy ? "Please wait..." : "Create Account"}
+                </button>
+              )}
+
+              <button
+                className="small-btn"
+                onClick={() => {
+                  setShowForgot((v) => !v);
+                  setForgotEmail(email);
+                }}
+                disabled={busy}
+              >
+                Forgot Password
+              </button>
+            </div>
+
+            {showForgot && (
+              <div style={{ marginTop: 12 }}>
+                <div className="field">
+                  <label>EMAIL FOR RESET</label>
+                  <input
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="Enter email"
+                  />
+                </div>
+                <div className="modal-actions">
+                  <button className="small-btn primary" onClick={sendResetEmail} disabled={busy}>
+                    {busy ? "Sending..." : "Send Reset Email"}
+                  </button>
+                  <button className="small-btn" onClick={() => setShowForgot(false)} disabled={busy}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
+
+  // ========= RESET PASSWORD SCREEN =========
+  if (screen === "resetPassword") {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="topbar-left">
+            <button className="back-btn" onClick={() => setScreen("auth")} title="Back">
+              ←
+            </button>
+            <div className="brand">{titleLine}</div>
+          </div>
+          <div />
+        </div>
+
+        <div className="white-surface">
+          <div className="auth-card">
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Set a new password</div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Enter your new password below.
+            </div>
+
+            <div className="field">
+              <label>NEW PASSWORD</label>
+              <div className="pw-wrap">
+                <input
+                  type={showNewPass ? "text" : "password"}
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  placeholder="••••••••"
+                />
+                <button className="eye" onClick={() => setShowNewPass((v) => !v)} type="button">
+                  {showNewPass ? "🙈" : "👁️"}
+                </button>
+              </div>
+            </div>
+
+            <div className="field">
+              <label>CONFIRM NEW PASSWORD</label>
+              <div className="pw-wrap">
+                <input
+                  type={showNewPass2 ? "text" : "password"}
+                  value={newPass2}
+                  onChange={(e) => setNewPass2(e.target.value)}
+                  placeholder="••••••••"
+                />
+                <button className="eye" onClick={() => setShowNewPass2((v) => !v)} type="button">
+                  {showNewPass2 ? "🙈" : "👁️"}
+                </button>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={updatePasswordNow} disabled={busy}>
+                {busy ? "Updating..." : "Update Password"}
+              </button>
+              <button
+                className="small-btn"
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                  setRecoveryMode(false);
+                  setScreen("auth");
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="subtle" style={{ marginTop: 10 }}>
+              If it says “Auth session missing”, open the reset email link again (it may be expired).
+            </div>
+          </div>
+        </div>
+
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
+
+  // ========= PROFILE SETUP (first login required) =========
+  if (screen === "profileSetup") {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="topbar-left">
+            <div className="brand">{titleLine}</div>
+          </div>
+          <button
+            className="icon-btn"
+            onClick={async () => {
+              await signOut();
+            }}
+            title="Logout"
+          >
+            ⎋
+          </button>
+        </div>
+
+        <div className="white-surface">
+          <div className="auth-card">
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Complete your profile</div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Please fill out your profile first. After saving, you can use your dashboard immediately.
+            </div>
+
+            <div className="profile-card">
+              <div
+                className="avatar"
+                onClick={() => document.getElementById("avatarInputSetup").click()}
+                style={{ cursor: "pointer" }}
+                title="Change photo"
+              >
+                {avatarSrc ? <img src={avatarSrc} alt="avatar" /> : <div style={{ fontSize: 28 }}>👤</div>}
+              </div>
+
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Profile Photo</div>
+                <div className="subtle" style={{ margin: 0 }}>
+                  Tap to upload
+                </div>
+              </div>
+            </div>
+
+            <input
+              id="avatarInputSetup"
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) uploadAvatar(f);
+              }}
+            />
+
+            <div className="field">
+              <label>FULL NAME</label>
+              <input value={profile.name || ""} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
+            </div>
+
+            <div className="field">
+              <label>SECTION</label>
+              <input
+                value={profile.section || ""}
+                onChange={(e) => setProfile({ ...profile, section: e.target.value })}
+              />
+            </div>
+
+            <div className="field">
+              <label>SCHOOL</label>
+              <input
+                value={profile.school || ""}
+                onChange={(e) => setProfile({ ...profile, school: e.target.value })}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="small-btn primary"
+                disabled={busy}
+                onClick={async () => {
+                  const n = (profile.name || "").trim();
+                  const s = (profile.section || "").trim();
+                  const sch = (profile.school || "").trim();
+                  if (!n || !s || !sch) return notify("Please complete all fields.");
+
+                  await saveProfile(profile);
+                  await loadSubjects();
+                  setScreen("home");
+                }}
+              >
+                {busy ? "Saving..." : "Save & Continue"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
+
   // ========= MAIN UI =========
   return (
     <div className="app-shell">
@@ -966,39 +1280,157 @@ export default function PortfolioApp({ user }) {
                     setOptionsFor(f);
                     setRenameTitle(f.title || "");
                   }}
+                  title="Options"
                 >
                   ⋮
                 </button>
               </div>
             ))}
+
+            {!loadingFiles && files.length === 0 && (
+              <div className="subtle" style={{ marginTop: 10 }}>
+                No files yet. Tap the + button to upload.
+              </div>
+            )}
           </div>
 
-          <button className="fab" onClick={triggerUpload}>
+          <button className="fab" onClick={triggerUpload} title="Upload">
             +
           </button>
         </div>
       )}
 
-      {/* UPDATED BOTTOM NAV */}
+      {/* ✅ UPDATED NAV ONLY */}
       <div className="bottom-nav">
         <button className={"bn " + (screen === "profile" ? "active" : "")} onClick={() => setScreen("profile")}>
           👤 <span>My Profile</span>
         </button>
 
-        <button
-          className="bn"
-          onClick={async () => {
-            await signOut();
-            setScreen("auth");
-            setAuthTab("login");
-          }}
-        >
+        <button className="bn" onClick={signOut}>
           ⎋ <span>Logout</span>
         </button>
       </div>
 
-      {/* UPLOAD, PREVIEW, OPTIONS, ADD SUBJECT MODALS remain UNCHANGED */}
-      {/* They are exactly the same as your current working code */}
+      {/* UPLOAD CHOOSER */}
+      {showUploadChooser && (
+        <div className="modal-overlay" onClick={() => setShowUploadChooser(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>Upload</div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Choose how to upload your file.
+            </div>
+
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={() => fileRef.current?.click()}>
+                Choose file
+              </button>
+              <button className="small-btn" onClick={() => cameraRef.current?.click()}>
+                Use camera
+              </button>
+              <button className="small-btn" onClick={() => setShowUploadChooser(false)}>
+                Cancel
+              </button>
+            </div>
+
+            <input ref={fileRef} type="file" style={{ display: "none" }} onChange={handleUploadAny} />
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={handleUploadCamera}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* PREVIEW MODAL */}
+      {preview && (
+        <div className="modal-overlay preview-overlay" onClick={() => setPreview(null)}>
+          <div className="preview-card" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-top">
+              <div className="preview-title">{preview.title}</div>
+              <button className="small-btn" onClick={() => setPreview(null)}>
+                Close
+              </button>
+            </div>
+
+            <div className="preview-body">
+              {preview.loading ? (
+                <div className="subtle">Loading preview...</div>
+              ) : isImage(preview.mime) ? (
+                <img className="preview-img" src={preview.url} alt={preview.title} />
+              ) : (
+                <iframe className="preview-frame" title="preview" src={preview.url} style={{ height: "70vh" }} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OPTIONS MODAL */}
+      {optionsFor && (
+        <div className="modal-overlay" onClick={() => setOptionsFor(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>File Options</div>
+
+            <div className="field" style={{ marginTop: 10 }}>
+              <label>RENAME</label>
+              <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} />
+            </div>
+
+            <div className="modal-actions">
+              <button className="small-btn primary" onClick={renameFile}>
+                Save Name
+              </button>
+              <button className="small-btn danger" onClick={deleteFile}>
+                Delete
+              </button>
+              <button className="small-btn" onClick={() => setOptionsFor(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD SUBJECT MODAL */}
+      {showAddSubject && (
+        <div className="modal-overlay" onClick={() => setShowAddSubject(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>Add Subject</div>
+
+            <div className="field" style={{ marginTop: 10 }}>
+              <label>SUBJECT NAME</label>
+              <input value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} placeholder="e.g. Math" />
+            </div>
+
+            <div style={{ marginTop: 10, fontWeight: 900, fontSize: 12, opacity: 0.75 }}>ICON</div>
+            <div className="icon-grid" style={{ marginTop: 8 }}>
+              {ICONS.map((ic) => (
+                <button
+                  key={ic}
+                  className={"icon-pick " + (newSubIcon === ic ? "active" : "")}
+                  onClick={() => setNewSubIcon(ic)}
+                  type="button"
+                >
+                  {ic}
+                </button>
+              ))}
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: 14 }}>
+              <button className="small-btn primary" onClick={addSubject}>
+                Add
+              </button>
+              <button className="small-btn" onClick={() => setShowAddSubject(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </div>

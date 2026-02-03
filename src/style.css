@@ -635,14 +635,14 @@ body{
 }
 /* ===== Make pill nav text smaller (mobile) ===== */
 .pill-btn{
-  font-size: 12px !important;   /* text size */
+  font-size: 10px !important;   /* text size */
   padding: 0 10px !important;
 }
 
 .pill-ic{
-  font-size: 16px !important;   /* icon size */
+  font-size: 14px !important;   /* icon size */
 }
 
 .pill-txt{
-  font-size: 12px !important;
+  font-size: 10px !important;
 }
